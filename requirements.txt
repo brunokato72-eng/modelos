@@ -1,0 +1,20 @@
+# Núcleo de dados
+numpy>=1.23
+pandas>=1.5
+scipy>=1.9
+
+# Pré-processamento, split e métricas
+scikit-learn>=1.2
+
+# Rede neural
+tensorflow>=2.12   # inclui o Keras
+
+# Visualização (EDA e avaliação)
+matplotlib>=3.6
+seaborn>=0.12
+
+# Configuração
+pyyaml>=6.0
+
+# Salvar/carregar objetos de pré-processamento
+joblib>=1.2

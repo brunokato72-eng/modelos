@@ -1,0 +1,74 @@
+# =====================================================================
+# Configuração do pipeline de rede neural.
+# Altere APENAS este arquivo para aplicar o pipeline na sua base.
+# Nenhuma mudança de código é necessária para trocar de dataset.
+# =====================================================================
+
+data:
+  # Caminho do arquivo de dados. Aceita .csv, .xlsx/.xls e .parquet
+  path: "data/dataset.csv"
+
+  # Nome da coluna alvo (o que você quer prever).
+  target: "target"
+
+  # Separador do CSV (use "," ou ";"). Ignorado para excel/parquet.
+  csv_sep: ","
+
+  # Colunas para remover antes de treinar (ids, datas irrelevantes, etc.).
+  # Deixe [] se não quiser remover nenhuma.
+  drop_columns: []
+
+problem:
+  # "auto"  -> o pipeline detecta se é classificação ou regressão
+  # "classification" -> força classificação
+  # "regression"     -> força regressão
+  type: "auto"
+
+split:
+  test_size: 0.20        # fração para a base de TESTE
+  validation_size: 0.20  # fração (do que sobra) para a base de VALIDAÇÃO
+  random_state: 42
+  # Estratificar mantém a proporção das classes no split (só classificação).
+  stratify: true
+
+preprocessing:
+  # Estratégia de imputação de valores faltantes
+  numeric_impute: "median"      # "mean" | "median" | "most_frequent" | "constant"
+  categorical_impute: "most_frequent"
+  # Padronização das features numéricas
+  scaler: "standard"            # "standard" | "minmax" | "none"
+  # Como codificar categóricas: "onehot" | "ordinal"
+  categorical_encoding: "onehot"
+  # Categóricas com mais de max_cardinality valores únicos são tratadas
+  # como alta cardinalidade (evita explosão de colunas no one-hot).
+  max_cardinality: 30
+
+model:
+  # Camadas ocultas: uma entrada por camada, valor = nº de neurônios
+  hidden_layers: [128, 64, 32]
+  activation: "relu"
+  dropout: 0.2               # 0 desliga dropout
+  batch_normalization: true
+  # Regularização L2 nos pesos (0 desliga)
+  l2: 0.0
+
+train:
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: "adam"          # "adam" | "rmsprop" | "sgd"
+  # Para em N épocas sem melhora na validação
+  early_stopping_patience: 10
+  # Reduz o learning rate quando estagna
+  reduce_lr_patience: 5
+  # Balanceia classes desbalanceadas (só classificação)
+  class_weight: true
+
+output:
+  dir: "outputs"
+  figures_dir: "outputs/figures"
+  models_dir: "outputs/models"
+  # Nível de detalhe do log de treino (0 silencioso, 1 barra, 2 por época)
+  verbose: 1
+
+seed: 42
