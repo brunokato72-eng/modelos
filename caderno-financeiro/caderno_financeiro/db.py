@@ -84,20 +84,27 @@ def linha_para_dict(linha: sqlite3.Row) -> Dict[str, Any]:
     return {_PARA_DICT[c]: linha[c] for c in linha.keys()}
 
 
-def conectar(caminho: Optional[Path] = None) -> sqlite3.Connection:
+def conectar(caminho: Optional[Path] = None, *, criar_esquema: bool = True) -> sqlite3.Connection:
+    """Abre uma conexão. `criar_esquema=False` pula o DDL (CREATE TABLE IF NOT
+    EXISTS) — usado pelo servidor web, que já garante o schema uma vez no start
+    e abre uma conexão por request; repetir DDL a cada request é desnecessário
+    e, sob concorrência, é o que causava "database is locked" nas rotas de
+    leitura enquanto uma escrita estava em andamento."""
     destino = Path(caminho) if caminho else config.caminho_banco()
     destino.parent.mkdir(parents=True, exist_ok=True)
-    conexao = sqlite3.connect(str(destino))
+    conexao = sqlite3.connect(str(destino), timeout=10)
     conexao.row_factory = sqlite3.Row
     conexao.execute("PRAGMA journal_mode=WAL")
     conexao.execute("PRAGMA foreign_keys=ON")
-    conexao.executescript(ESQUEMA)
+    conexao.execute("PRAGMA busy_timeout=10000")
+    if criar_esquema:
+        conexao.executescript(ESQUEMA)
     return conexao
 
 
 @contextmanager
-def banco(caminho: Optional[Path] = None):
-    conexao = conectar(caminho)
+def banco(caminho: Optional[Path] = None, *, criar_esquema: bool = True):
+    conexao = conectar(caminho, criar_esquema=criar_esquema)
     try:
         yield conexao
         conexao.commit()

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import config, consulta, db, estatisticas, exportador, ia, importador, registro
+from . import auth, config, consulta, db, estatisticas, exportador, ia, importador, registro
 from .calculadora import OPERACOES, executar_calculo
 from .datas import mes_atual, validar_mes
 from .valores import formatar
@@ -356,6 +356,55 @@ def cmd_exportar(args) -> int:
     return 0
 
 
+def cmd_definir_pin(args) -> int:
+    if sys.stdin.isatty():
+        import getpass
+
+        pin = getpass.getpass("novo PIN: ")
+        confirmacao = getpass.getpass("confirme o PIN: ")
+        if pin != confirmacao:
+            print(pintar("os PINs não batem.", VERMELHO))
+            return 1
+    else:
+        pin = sys.stdin.readline().strip()
+    try:
+        with db.banco(args.banco) as conexao:
+            auth.definir_pin(conexao, pin)
+    except ValueError as erro:
+        print(pintar(f"erro: {erro}", VERMELHO))
+        return 1
+    print(pintar("PIN definido. Sessões antigas (se houver) foram revogadas.", VERDE))
+    return 0
+
+
+def cmd_revogar_sessoes(args) -> int:
+    with db.banco(args.banco) as conexao:
+        total = auth.revogar_todas_as_sessoes(conexao)
+    print(pintar(f"{total} sessão(ões) revogada(s). Todo dispositivo vai pedir o PIN de novo.", VERDE))
+    return 0
+
+
+def cmd_servir(args) -> int:
+    with db.banco(args.banco) as conexao:
+        pin_ok = auth.pin_configurado(conexao)
+    if not pin_ok:
+        print(pintar("nenhum PIN configurado ainda — rode `caderno definir-pin` primeiro.", VERMELHO))
+        return 1
+    try:
+        from . import servidor
+    except ImportError:
+        print(pintar(
+            "faltou o Flask — instale com `pip install -e \".[web]\"` (ou `pip install flask`) "
+            "pra usar o servidor.", VERMELHO,
+        ))
+        return 1
+    print(pintar(f"servindo em http://{args.host}:{args.porta}", NEGRITO))
+    print(pintar("acesse pelo endereço da sua tailnet a partir do celular (ex: http://<nome-tailscale>:"
+                 f"{args.porta}). Ctrl+C pra parar.", CINZA))
+    servidor.rodar(host=args.host, porta=args.porta, debug=args.debug, banco=args.banco)
+    return 0
+
+
 def cmd_remover(args) -> int:
     with db.banco(args.banco) as conexao:
         alvo = db.buscar(conexao, args.id)
@@ -482,6 +531,18 @@ def construir_parser() -> argparse.ArgumentParser:
     p = subcomandos.add_parser("testar-toolcall", help="verifica se o function calling nativo funciona")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_testar_toolcall)
+
+    p = subcomandos.add_parser("definir-pin", help="define o PIN de acesso ao servidor web")
+    p.set_defaults(funcao=cmd_definir_pin)
+
+    p = subcomandos.add_parser("revogar-sessoes", help="derruba todo dispositivo logado no servidor web")
+    p.set_defaults(funcao=cmd_revogar_sessoes)
+
+    p = subcomandos.add_parser("servir", help="sobe o servidor web local (API + PWA) pra acesso remoto")
+    p.add_argument("--host", default="0.0.0.0", help="endereço pra escutar (padrão: todas as interfaces)")
+    p.add_argument("--porta", type=int, default=8420)
+    p.add_argument("--debug", action="store_true", help="modo debug do Flask (não usar exposto)")
+    p.set_defaults(funcao=cmd_servir)
 
     return parser
 

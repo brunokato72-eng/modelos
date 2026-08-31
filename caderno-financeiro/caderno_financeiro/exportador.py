@@ -8,6 +8,7 @@ Não depende de IA nem de rede: funciona mesmo que todo o resto esteja quebrado.
 from __future__ import annotations
 
 import csv
+import io
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -50,21 +51,27 @@ def nome_padrao(diretorio: Optional[Path] = None) -> Path:
     return base / f"caderno-backup-{carimbo}.csv"
 
 
+def _despejar(lancamentos: Sequence[Dict[str, Any]], arquivo) -> int:
+    linhas = sorted(lancamentos, key=lambda e: (e.get("data") or "", e.get("criadoEm") or ""))
+    escritor = csv.writer(arquivo)
+    escritor.writerow(CABECALHO)
+    for lancamento in linhas:
+        escritor.writerow([lancamento.get(_DE_DICT[coluna], "") for coluna in CABECALHO])
+    return len(linhas)
+
+
+def para_texto(lancamentos: Sequence[Dict[str, Any]]) -> str:
+    """CSV completo como string — usado pelo servidor web (download direto)."""
+    buffer = io.StringIO()
+    _despejar(lancamentos, buffer)
+    return buffer.getvalue()
+
+
 def escrever(lancamentos: Sequence[Dict[str, Any]], destino) -> int:
     """`destino` pode ser um caminho ou '-' para stdout."""
-    linhas = sorted(lancamentos, key=lambda e: (e.get("data") or "", e.get("criadoEm") or ""))
-
-    def _despejar(arquivo):
-        escritor = csv.writer(arquivo)
-        escritor.writerow(CABECALHO)
-        for lancamento in linhas:
-            escritor.writerow([lancamento.get(_DE_DICT[coluna], "") for coluna in CABECALHO])
-
     if str(destino) == "-":
-        _despejar(sys.stdout)
-    else:
-        caminho = Path(destino)
-        caminho.parent.mkdir(parents=True, exist_ok=True)
-        with caminho.open("w", encoding="utf-8", newline="") as arquivo:
-            _despejar(arquivo)
-    return len(linhas)
+        return _despejar(lancamentos, sys.stdout)
+    caminho = Path(destino)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    with caminho.open("w", encoding="utf-8", newline="") as arquivo:
+        return _despejar(lancamentos, arquivo)

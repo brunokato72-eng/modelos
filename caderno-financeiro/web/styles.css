@@ -1,0 +1,206 @@
+:root {
+  color-scheme: dark;
+  --fundo: #0b1120;
+  --superficie: #151f32;
+  --superficie-alta: #1c2a42;
+  --borda: #26344c;
+  --texto: #e6edf5;
+  --texto-fraco: #93a3b8;
+  --acento: #14b8a6;
+  --acento-forte: #0f766e;
+  --erro: #f87171;
+  --receita: #34d399;
+  --despesa: #f87171;
+}
+
+* { box-sizing: border-box; }
+
+/* [hidden] tem a mesma especificidade de uma classe, e regras de autor vencem
+   as do navegador — sem isso, elementos com `display` na própria classe
+   (.tela-cheia, .app) continuam ocupando espaço mesmo com `hidden` setado. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  background: var(--acento-forte);
+  color: white;
+  padding: 0.7rem 1rem;
+  font-size: 1rem;
+}
+button:active { opacity: 0.8; }
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: 1rem;
+  background: var(--superficie-alta);
+  border: 1px solid var(--borda);
+  color: var(--texto);
+  border-radius: 10px;
+  padding: 0.7rem;
+  width: 100%;
+}
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
+
+.tela-cheia {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.cartao-login {
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+}
+.cartao-login h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+#form-login { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 1rem; }
+
+.texto-fraco { color: var(--texto-fraco); font-size: 0.9rem; }
+.texto-erro { color: var(--erro); font-size: 0.9rem; }
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: env(safe-area-inset-top, 0.8rem) 1rem 0.8rem;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.8rem);
+  border-bottom: 1px solid var(--borda);
+  flex-shrink: 0;
+}
+.cabecalho-titulo { font-weight: 600; }
+
+.botao-icone {
+  background: transparent;
+  color: var(--texto-fraco);
+  padding: 0.3rem 0.6rem;
+  font-size: 1.2rem;
+}
+
+.conteudo {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  padding-bottom: 2rem;
+}
+
+.aba { display: flex; flex-direction: column; gap: 1rem; }
+
+.cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+#form-registrar label { display: block; margin-bottom: 0.5rem; color: var(--texto-fraco); font-size: 0.9rem; }
+#form-registrar textarea { resize: vertical; margin-bottom: 0.7rem; }
+.linha-botoes { display: flex; justify-content: flex-end; }
+
+.lista-lancamentos { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.item-lancamento {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+.item-lancamento .detalhe { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.item-lancamento .descricao { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-lancamento .meta { font-size: 0.8rem; color: var(--texto-fraco); }
+.item-lancamento .valor { font-weight: 600; white-space: nowrap; }
+.item-lancamento .valor.despesa { color: var(--despesa); }
+.item-lancamento .valor.receita { color: var(--receita); }
+.item-lancamento .remover {
+  background: transparent;
+  color: var(--texto-fraco);
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  flex-shrink: 0;
+}
+
+.seletor-mes {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.resumo-totais { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; margin-bottom: 0.2rem; }
+.resumo-caixa { background: var(--superficie); border: 1px solid var(--borda); border-radius: 12px; padding: 0.9rem; }
+.resumo-caixa .rotulo { font-size: 0.8rem; color: var(--texto-fraco); }
+.resumo-caixa .numero { font-size: 1.3rem; font-weight: 700; margin-top: 0.2rem; }
+.resumo-caixa .numero.despesa { color: var(--despesa); }
+.resumo-caixa .numero.receita { color: var(--receita); }
+
+.resumo-bloco-titulo { font-size: 0.85rem; color: var(--texto-fraco); margin: 1rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.barra-grupo { margin-bottom: 0.6rem; }
+.barra-grupo .barra-topo { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.3rem; }
+.barra-fundo { background: var(--superficie-alta); border-radius: 6px; height: 8px; overflow: hidden; }
+.barra-preenchimento { background: var(--acento); height: 100%; border-radius: 6px; }
+
+.chat-mensagens {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-bottom: 0.5rem;
+}
+.mensagem { max-width: 85%; padding: 0.7rem 0.9rem; border-radius: 14px; white-space: pre-wrap; line-height: 1.4; }
+.mensagem.usuario { align-self: flex-end; background: var(--acento-forte); border-bottom-right-radius: 4px; }
+.mensagem.assistente { align-self: flex-start; background: var(--superficie); border: 1px solid var(--borda); border-bottom-left-radius: 4px; }
+.mensagem.carregando { color: var(--texto-fraco); font-style: italic; }
+
+#tab-perguntar.aba { height: 100%; }
+.chat-form { display: flex; gap: 0.5rem; flex-shrink: 0; }
+.chat-form input { flex: 1; }
+.chat-form button { flex-shrink: 0; }
+
+.abas-nav {
+  display: flex;
+  border-top: 1px solid var(--borda);
+  background: var(--superficie);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  flex-shrink: 0;
+}
+.aba-botao {
+  flex: 1;
+  background: transparent;
+  border-radius: 0;
+  color: var(--texto-fraco);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  padding: 0.6rem 0.2rem;
+}
+.aba-botao.ativo { color: var(--acento); }
+.aba-icone { font-size: 1.2rem; }
+
+.vazio { color: var(--texto-fraco); text-align: center; padding: 2rem 1rem; }

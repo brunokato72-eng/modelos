@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Caderno">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/favicon-32.png">
+<link rel="stylesheet" href="/styles.css">
+<title>Caderno Financeiro</title>
+</head>
+<body>
+
+<div id="tela-login" class="tela-cheia">
+  <div class="cartao-login">
+    <h1>Caderno Financeiro</h1>
+    <p id="login-mensagem" class="texto-fraco">Digite o PIN do servidor.</p>
+    <form id="form-login">
+      <input id="campo-pin" type="password" inputmode="numeric" autocomplete="current-password"
+             placeholder="PIN" autofocus>
+      <button type="submit">Entrar</button>
+    </form>
+    <p id="login-erro" class="texto-erro" hidden></p>
+  </div>
+</div>
+
+<div id="app" class="app" hidden>
+  <header class="cabecalho">
+    <span class="cabecalho-titulo">Caderno Financeiro</span>
+    <button id="botao-sair" class="botao-icone" title="Sair">⎋</button>
+  </header>
+
+  <main id="conteudo" class="conteudo">
+
+    <section id="tab-registrar" class="aba">
+      <form id="form-registrar" class="cartao">
+        <label for="campo-texto">O que aconteceu?</label>
+        <textarea id="campo-texto" rows="3" placeholder='"45,90 no mercado ontem", "recebi 5200 de salário"...'></textarea>
+        <div class="linha-botoes">
+          <button type="submit" id="botao-registrar">Registrar</button>
+        </div>
+      </form>
+      <div id="registrar-status"></div>
+      <div id="registrar-lista" class="lista-lancamentos"></div>
+    </section>
+
+    <section id="tab-resumo" class="aba" hidden>
+      <div class="seletor-mes cartao">
+        <button id="mes-anterior" class="botao-icone">‹</button>
+        <span id="mes-atual-rotulo">—</span>
+        <button id="mes-seguinte" class="botao-icone">›</button>
+      </div>
+      <div id="resumo-conteudo"></div>
+    </section>
+
+    <section id="tab-perguntar" class="aba" hidden>
+      <div id="chat-mensagens" class="chat-mensagens"></div>
+      <form id="form-chat" class="chat-form">
+        <input id="campo-pergunta" type="text" placeholder="quanto gastei em mercado esse mês?" autocomplete="off">
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+
+    <section id="tab-historico" class="aba" hidden>
+      <div class="seletor-mes cartao">
+        <button id="hist-mes-anterior" class="botao-icone">‹</button>
+        <span id="hist-mes-rotulo">—</span>
+        <button id="hist-mes-seguinte" class="botao-icone">›</button>
+      </div>
+      <div id="historico-lista" class="lista-lancamentos"></div>
+    </section>
+
+  </main>
+
+  <nav class="abas-nav">
+    <button class="aba-botao ativo" data-aba="registrar">
+      <span class="aba-icone">＋</span><span>Registrar</span>
+    </button>
+    <button class="aba-botao" data-aba="resumo">
+      <span class="aba-icone">▤</span><span>Resumo</span>
+    </button>
+    <button class="aba-botao" data-aba="perguntar">
+      <span class="aba-icone">💬</span><span>Perguntar</span>
+    </button>
+    <button class="aba-botao" data-aba="historico">
+      <span class="aba-icone">☰</span><span>Histórico</span>
+    </button>
+  </nav>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

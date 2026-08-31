@@ -20,7 +20,7 @@ class TestRegrasDeterministicas(unittest.TestCase):
 
     def test_regra_3_explicito_ganha(self):
         self.assertEqual(aplicar_regras("Pix", "Itaú"), ("Pix", "Itaú"))
-        self.assertEqual(aplicar_regras("pix", None), ("Pix", ""))
+        self.assertEqual(aplicar_regras("pix", None), ("Pix", config.CONTA_PADRAO))
         # forma dita explicitamente numa compra do Ifood não é sobrescrita
         self.assertEqual(aplicar_regras("Pix", "Ifood"), ("Pix", "Ifood"))
 
@@ -28,6 +28,13 @@ class TestRegrasDeterministicas(unittest.TestCase):
         forma, conta = aplicar_regras(None, "Inter")
         self.assertEqual(forma, config.FORMA_PADRAO)
         self.assertEqual(conta, "Inter")
+
+    def test_forma_citada_sem_conta_tambem_nao_fica_em_branco(self):
+        # espelho do caso acima: "no pix" sem dizer o banco vira Pix + Nubank,
+        # não Pix + conta em branco — cada campo em branco pega seu próprio padrão
+        forma, conta = aplicar_regras("Pix", None)
+        self.assertEqual(forma, "Pix")
+        self.assertEqual(conta, config.CONTA_PADRAO)
 
 
 class TestNormalizacoes(unittest.TestCase):

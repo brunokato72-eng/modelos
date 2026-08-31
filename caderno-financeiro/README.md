@@ -53,6 +53,7 @@ Para ter o comando curto `caderno` no PATH:
 ```bash
 pip install -e .            # opcional; instala o entry point `caderno`
 pip install -e ".[xlsx]"    # idem, com suporte a importar .xlsx
+pip install -e ".[web]"     # idem, com o servidor web pro acesso remoto (seção 8)
 ```
 
 Sem instalar, todo comando deste README funciona trocando `caderno` por
@@ -139,11 +140,14 @@ Tudo abaixo acontece depois, em Python, sempre igual:
 2. Conta = `Ifood` → forma de pagamento `VR` (tem prioridade sobre a regra 1).
 3. O que foi dito explicitamente é respeitado; as regras acima só preenchem branco.
 
-> Um caso que o briefing não fecha: conta mencionada (ex.: "Inter") **sem** forma
-> de pagamento. Como a regra 1 exige os dois em branco, o campo ficaria vazio;
-> aqui ele é completado com a mesma forma padrão (`Cartão de crédito`) pra não
-> gravar lançamento sem forma. Está isolado em `regras.aplicar_regras` se você
-> quiser outro comportamento.
+> Um caso que o briefing não fecha explicitamente: só um dos dois campos vem
+> mencionado (ex.: "no pix" sem dizer o banco, ou conta "Inter" sem dizer a
+> forma). A leitura adotada é a distributiva da regra 3 ("as regras acima só
+> preenchem o que ficou em branco"): cada campo em branco recebe o próprio
+> padrão da regra 1 — forma ausente vira `Cartão de crédito`, conta ausente
+> vira `Nubank` — independente do outro campo ter sido dito. Nenhum lançamento
+> fica sem forma ou sem conta por causa disso. Está isolado em
+> `regras.aplicar_regras` se você quiser outro comportamento.
 
 **Parcelamento** (`regras.dividir_parcelas` + `datas.somar_meses`): o valor total
 é dividido **em centavos inteiros** e a sobra vai pra última parcela, então a soma
@@ -230,8 +234,11 @@ caderno_financeiro/
   registro.py         texto/voz -> extração -> regras -> parcelas -> banco
   importador.py       CSV/XLSX: detecção de colunas, normalização, dedup
   exportador.py       backup CSV (relegível pelo próprio importador)
+  auth.py             PIN + token de sessão do servidor web
+  servidor.py         API HTTP (Flask) + arquivos do PWA — acesso remoto
   cli.py              comandos
-tests/                75 testes, nenhum deles chama o modelo
+web/                  PWA: index.html, app.js, styles.css, manifest, ícones
+tests/                98 testes, nenhum deles chama o modelo de verdade
 exemplos/             CSV de exemplo no formato do histórico
 ```
 
@@ -260,25 +267,75 @@ Um efeito colateral esperado da regra de duplicata: dois gastos legítimos de
 mesmo valor em dias vizinhos (dois cafés de R$ 20 seguidos) contam como
 duplicata. Nesses casos, `--tolerancia 0` (exige data idêntica) ou `--sem-dedup`.
 
-## 8. O que ficou de fora (de propósito)
+## 8. Acesso remoto (celular, via PWA + Tailscale)
 
-**Acesso remoto / celular** — passo 10 do briefing, que depende desta base estar
-de pé. O ponto de arquitetura não muda: a sessão autenticada da assinatura vive
-onde o `claude` está logado, e ela **nunca** pode ser exposta ao cliente final.
-Isso descarta o celular chamando o modelo direto, e deixa dois caminhos:
+Passo 10 do briefing. A arquitetura escolhida foi a mais simples das duas
+cogitadas: **sua própria máquina fica ligada**, e o celular acessa por um túnel
+— nunca pela internet aberta, e a credencial da assinatura nunca sai daqui. Quem
+fala com o Claude continua sendo o CLI `claude` local (`ia.py`), exatamente como
+no uso por linha de comando; o servidor web só expõe a lógica que já existia
+(`registro`, `consulta`, `estatisticas` não sabem que existe HTTP).
 
-- **máquina de casa ligada + túnel** (Tailscale/Cloudflare Tunnel): a sessão fica
-  só na sua máquina, o celular vira um cliente burro. Mais barato e mais simples;
-  depende do computador estar ligado.
-- **VPS pequena com o `claude` logado nela**: funciona sem depender da sua
-  máquina; exige fazer o login da assinatura no servidor e proteger o acesso.
+### Peças
 
-Nos dois casos o front no celular é um **PWA** (web app instalável, ícone na tela
-inicial, tela cheia) servido pelo mesmo processo — app nativo de loja é
-desproporcional aqui. Isso é uma fase seguinte, e vale decidir junto quando você
-tiver rodado esta versão por algumas semanas.
+- **`caderno servir`** — sobe uma API HTTP local (Flask) + o PWA em
+  `web/`. Roda na sua máquina, escuta em todas as interfaces por padrão.
+- **PIN de acesso** — segunda camada de proteção além do túnel. Guardado como
+  hash (PBKDF2 + salt), nunca em texto puro. O PWA troca o PIN por um token de
+  sessão (90 dias) guardado no `localStorage` do celular; perdeu o celular?
+  `caderno revogar-sessoes` derruba todo mundo de uma vez.
+- **Tailscale** — a rede privada que conecta seus dispositivos sem abrir porta
+  nenhuma pra internet. É o componente que falta você mesmo instalar (não dá
+  pra fazer isso remotamente por você).
 
-**Interface gráfica** — a versão local é CLI, que é o formato proporcional a
-"rodar sob demanda no meu computador". O front web vem junto com a decisão de
-hospedagem acima, reaproveitando os mesmos módulos (`registro`, `consulta`,
-`estatisticas` não sabem que existe CLI).
+### Configurar (uma vez)
+
+```bash
+pip install -e ".[web]"       # instala o Flask
+caderno definir-pin           # escolhe o PIN de acesso ao servidor
+```
+
+Instale o [Tailscale](https://tailscale.com/download) na máquina que vai rodar
+o servidor e no celular, e entre com a mesma conta nos dois. Cada dispositivo
+ganha um nome na sua rede privada (`tailscale status` mostra os nomes).
+
+### Usar
+
+Na máquina (precisa estar ligada e com o Tailscale ativo):
+
+```bash
+caderno servir
+```
+
+No celular, com o Tailscale ativo, abra no navegador:
+
+```
+http://<nome-tailscale-da-maquina>:8420
+```
+
+Digite o PIN, e no menu do navegador escolha **"Adicionar à tela de início"**
+(Android/Chrome) ou **"Adicionar à Tela de Início"** (iOS/Safari) — vira um
+ícone que abre em tela cheia, como um app.
+
+Prefere IP fixo a nome? `tailscale ip -4` na máquina do servidor mostra o IP da
+tailnet (só muda se você reconfigurar a rede).
+
+### O que o PWA cobre
+
+Registrar por texto, resumo do mês, perguntas em chat (mantendo contexto) e
+histórico com exclusão — os quatro usos do dia a dia. Import de planilha e
+voz continuam só no CLI por enquanto (uso pontual, não precisa estar no bolso).
+
+### Limites conscientes
+
+- O servidor Flask embutido (`app.run()`) é o de desenvolvimento — adequado
+  pra um único usuário atrás de uma tailnet, mas o próprio Flask avisa que não
+  é pensado pra produção geral. Se algum dia isso for exposto além da sua
+  tailnet, troque por um servidor WSGI de verdade (gunicorn/waitress) antes.
+- Sem a máquina ligada (ou sem o Tailscale ativo nela), o PWA abre mas não
+  funciona — é o trade-off assumido ao escolher essa arquitetura em vez de uma
+  VPS 24/7.
+
+**Interface gráfica** — o PWA existe hoje como a superfície remota; a CLI
+continua sendo a forma mais direta de uso local (import de planilha, testes,
+automações). Os dois falam com os mesmos módulos, nenhum é "o principal".

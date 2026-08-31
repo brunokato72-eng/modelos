@@ -156,27 +156,26 @@ def eh_conta_vr(conta) -> bool:
 def aplicar_regras(forma_bruta, conta_bruta) -> tuple:
     """Aplica as regras 1-3 e devolve (forma_pagamento, conta) já preenchidos.
 
-    Ordem: o que foi dito manda (regra 3); Ifood preenche VR (regra 2, com
-    prioridade); os dois em branco caem no padrão (regra 1).
+    Ordem: Ifood preenche VR primeiro (regra 2, tem prioridade); depois, cada
+    campo que ficou em branco recebe o próprio padrão da regra 1 — forma vira
+    Cartão de crédito, conta vira Nubank — independentemente do outro campo ter
+    sido dito ou não. É a leitura distributiva da regra 3 ("as regras acima só
+    preenchem o que ficou em branco"): nenhum lançamento fica sem forma ou sem
+    conta só porque só um dos dois foi mencionado.
     """
     conta = str(conta_bruta or "").strip()
     forma = normalizar_forma(forma_bruta)
-    conta_mencionada = bool(conta)
-    forma_mencionada = bool(forma)
 
     if eh_conta_vr(conta):
         conta = config.CONTA_VR  # grafia canônica
-        if not forma_mencionada:
+        if not forma:
             forma = config.FORMA_DA_CONTA_VR
         return forma, conta
 
-    if not forma_mencionada and not conta_mencionada:
-        return config.FORMA_PADRAO, config.CONTA_PADRAO
-
-    if not forma_mencionada:
-        # Conta citada mas forma não: o briefing não cobre esse caso explicitamente;
-        # completamos com a mesma forma padrão da regra 1 pra nunca gravar em branco.
+    if not forma:
         forma = config.FORMA_PADRAO
+    if not conta:
+        conta = config.CONTA_PADRAO
 
     return forma, conta
 
