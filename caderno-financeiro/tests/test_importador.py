@@ -4,6 +4,7 @@ from pathlib import Path
 
 from caderno_financeiro import db, importador
 from caderno_financeiro.importador import detectar_colunas, parsear_data
+from caderno_financeiro.texto import normalizar_chave
 
 
 class TestDeteccaoDeColunas(unittest.TestCase):
@@ -34,6 +35,21 @@ class TestDeteccaoDeColunas(unittest.TestCase):
         self.assertEqual(mapa["valorTotal"], 1)
         self.assertEqual(mapa["valor"], 2)
         self.assertEqual(mapa["totalParcelas"], 3)
+
+    def test_cabecalho_camel_case_sem_separador(self):
+        # formato real do Gastos.xlsx: cabeçalho em PascalCase colado, sem espaço
+        mapa = detectar_colunas(["Data", "Valor", "Descrição", "Categoria", "Conta",
+                                 "FormaPagamento", "Tipo", "Fonte", "Status",
+                                 "ValorTotal", "TotalParcelas"])
+        self.assertEqual(mapa["formaPagamento"], 5)
+        self.assertEqual(mapa["valorTotal"], 9)
+        self.assertEqual(mapa["totalParcelas"], 10)
+
+    def test_acento_nao_e_confundido_com_fronteira_de_camel_case(self):
+        # bug real: À-Ÿ (U+00C0-U+0178) engloba todo o intervalo minúsculo à-ÿ,
+        # então "ç"/"ã" eram tratados como maiúscula e quebravam "Descrição" ao meio
+        self.assertEqual(normalizar_chave("Descrição"), "descricao")
+        self.assertEqual(normalizar_chave("Codificação"), "codificacao")
 
 
 class TestParsearData(unittest.TestCase):
