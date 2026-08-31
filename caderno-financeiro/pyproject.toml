@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caderno-financeiro"
+version = "1.0.0"
+description = "Caderno financeiro pessoal com registro por texto e cálculo determinístico, usando a assinatura do Claude"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+xlsx = ["openpyxl>=3.1"]
+voz = ["faster-whisper>=1.0"]
+
+[project.scripts]
+caderno = "caderno_financeiro.cli:main"
+
+[tool.setuptools]
+packages = ["caderno_financeiro"]

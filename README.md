@@ -116,3 +116,12 @@ split é **estratificado** por padrão (mantém a proporção das classes).
 python pipeline.py --config config.yaml   # config alternativo
 python pipeline.py --skip-eda             # pula a EDA
 ```
+
+---
+
+## Outros projetos neste repositório
+
+- **[`caderno-financeiro/`](caderno-financeiro/)** — caderno financeiro pessoal:
+  registro de gastos por texto livre, estatísticas locais e perguntas em
+  linguagem natural com cálculo determinístico, usando a assinatura do Claude
+  (sem chave de API paga).

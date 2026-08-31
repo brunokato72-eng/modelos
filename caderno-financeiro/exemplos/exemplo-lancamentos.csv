@@ -1,0 +1,11 @@
+data,tipo,categoria,valor,forma_pagamento,conta,descricao
+21/07/2026,Despesa,Mercado,287.45,Cartão de crédito,Nubank,compra do mês
+22/07/2026,Despesa,Transporte,24.90,Pix,Nubank,uber pro trabalho
+23/07/2026,Despesa,Alimentacao,38.90,,Ifood,almoço
+25/07/2026,Receita,Salário,5200.00,Pix,Itaú,salário julho
+28/07/2026,Despesa,Assinaturas,55.90,Cartão de crédito,Nubank,streaming
+02/08/2026,Despesa,Besteiras,18.50,Dinheiro,,padaria
+05/08/2026,Despesa,Saude,120.00,Cartão de débito,Itaú,consulta
+09/08/2026,Despesa,Lazer,89.00,Cartão de crédito,Nubank,cinema e jantar
+12/08/2026,Receita,Reembolso,310.00,Pix,Itaú,reembolso viagem
+15/08/2026,Despesa,Moradia,1450.00,Pix,Itaú,aluguel
