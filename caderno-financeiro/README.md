@@ -274,56 +274,81 @@ duplicata. Nesses casos, `--tolerancia 0` (exige data idêntica) ou `--sem-dedup
 
 ## 8. Acesso remoto (celular, via PWA + Tailscale)
 
-Passo 10 do briefing. A arquitetura escolhida foi a mais simples das duas
-cogitadas: **sua própria máquina fica ligada**, e o celular acessa por um túnel
-— nunca pela internet aberta, e a credencial da assinatura nunca sai daqui. Quem
-fala com o Claude continua sendo o CLI `claude` local (`ia.py`), exatamente como
-no uso por linha de comando; o servidor web só expõe a lógica que já existia
-(`registro`, `consulta`, `estatisticas` não sabem que existe HTTP).
+Passo 10 do briefing. A arquitetura é a mesma nos dois casos abaixo: **alguma
+máquina fica ligada com o `claude` logado na sua assinatura**, e o celular
+acessa por um túnel (Tailscale) — nunca pela internet aberta, e a credencial da
+assinatura nunca sai de lá. Quem fala com o Claude continua sendo o CLI
+`claude` local (`ia.py`), exatamente como no uso por linha de comando; o
+servidor web só expõe a lógica que já existia (`registro`, `consulta`,
+`estatisticas` não sabem que existe HTTP).
+
+A diferença é só **onde** essa máquina roda:
+
+- **VPS sempre ligada** (recomendado — ex.: Always Free da Oracle Cloud, que já
+  não tem custo) — funciona 24/7 sem depender do seu computador estar ligado.
+  Guia completo abaixo.
+- **Seu computador** — mesma coisa, só liga o servidor quando for usar. Pula
+  pra "Usar" abaixo trocando "a VPS" por "sua máquina".
+
+### Instalar numa VPS sempre ligada (Oracle Cloud Always Free ou equivalente)
+
+Script pronto em `deploy/instalar_oracle.sh` — detecta a distro sozinho
+(testado pensando em Ubuntu e Oracle Linux) e instala tudo: Python, Node (via
+nvm, não depende do gerenciador de pacote), o CLI `claude`, o Tailscale, e um
+serviço systemd que sobe o `caderno servir` automaticamente no boot e reinicia
+sozinho se cair.
+
+Via SSH na VPS:
+
+```bash
+git clone https://github.com/brunokato72-eng/modelos.git
+cd modelos/caderno-financeiro/deploy
+chmod +x instalar_oracle.sh
+./instalar_oracle.sh
+```
+
+O script instala tudo sozinho e para em 3 passos que só você pode fazer (são
+interativos, não dá pra automatizar):
+
+1. **Login do `claude` com sua assinatura** — `claude`, depois `/login` dentro
+   da sessão, e siga a URL que aparecer (abre em qualquer navegador, não
+   precisa ser na VPS).
+2. **Definir o PIN** — `caderno definir-pin`.
+3. **Autenticar o Tailscale na VPS** — `sudo tailscale up`, mesma conta que
+   você usa no celular.
+
+Depois dos 3 passos:
+
+```bash
+sudo systemctl enable --now caderno-financeiro   # ativa e já deixa subindo no boot
+sudo systemctl status caderno-financeiro         # confere que subiu
+tailscale ip -4                                  # o endereço que o celular vai usar
+```
+
+Rodar o script de novo depois (ex.: após um `git pull` com atualizações) é
+seguro — ele reaproveita o que já existe.
 
 ### Peças
 
-- **`caderno servir`** — sobe uma API HTTP local (Flask) + o PWA em
-  `web/`. Roda na sua máquina, escuta em todas as interfaces por padrão.
+- **`caderno servir`** — sobe a API HTTP (Flask) + o PWA em `web/`.
 - **PIN de acesso** — segunda camada de proteção além do túnel. Guardado como
   hash (PBKDF2 + salt), nunca em texto puro. O PWA troca o PIN por um token de
   sessão (90 dias) guardado no `localStorage` do celular; perdeu o celular?
   `caderno revogar-sessoes` derruba todo mundo de uma vez.
 - **Tailscale** — a rede privada que conecta seus dispositivos sem abrir porta
-  nenhuma pra internet. É o componente que falta você mesmo instalar (não dá
-  pra fazer isso remotamente por você).
-
-### Configurar (uma vez)
-
-```bash
-pip install -e ".[web]"       # instala o Flask
-caderno definir-pin           # escolhe o PIN de acesso ao servidor
-```
-
-Instale o [Tailscale](https://tailscale.com/download) na máquina que vai rodar
-o servidor e no celular, e entre com a mesma conta nos dois. Cada dispositivo
-ganha um nome na sua rede privada (`tailscale status` mostra os nomes).
+  nenhuma pra internet (nem na VPS, nem no roteador de casa).
 
 ### Usar
-
-Na máquina (precisa estar ligada e com o Tailscale ativo):
-
-```bash
-caderno servir
-```
 
 No celular, com o Tailscale ativo, abra no navegador:
 
 ```
-http://<nome-tailscale-da-maquina>:8420
+http://<nome-ou-ip-tailscale-da-vps>:8420
 ```
 
 Digite o PIN, e no menu do navegador escolha **"Adicionar à tela de início"**
 (Android/Chrome) ou **"Adicionar à Tela de Início"** (iOS/Safari) — vira um
 ícone que abre em tela cheia, como um app.
-
-Prefere IP fixo a nome? `tailscale ip -4` na máquina do servidor mostra o IP da
-tailnet (só muda se você reconfigurar a rede).
 
 ### O que o PWA cobre
 
@@ -337,9 +362,9 @@ voz continuam só no CLI por enquanto (uso pontual, não precisa estar no bolso)
   pra um único usuário atrás de uma tailnet, mas o próprio Flask avisa que não
   é pensado pra produção geral. Se algum dia isso for exposto além da sua
   tailnet, troque por um servidor WSGI de verdade (gunicorn/waitress) antes.
-- Sem a máquina ligada (ou sem o Tailscale ativo nela), o PWA abre mas não
-  funciona — é o trade-off assumido ao escolher essa arquitetura em vez de uma
-  VPS 24/7.
+- O free tier da Oracle tem limite de CPU/RAM (a menor instância ARM Ampere é
+  suficiente pro tamanho deste app, mas se você já usa essa VPS pro n8n,
+  confira se sobra recurso rodando os dois juntos).
 
 **Interface gráfica** — o PWA existe hoje como a superfície remota; a CLI
 continua sendo a forma mais direta de uso local (import de planilha, testes,
