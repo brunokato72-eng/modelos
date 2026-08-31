@@ -156,12 +156,14 @@ def eh_conta_vr(conta) -> bool:
 def aplicar_regras(forma_bruta, conta_bruta) -> tuple:
     """Aplica as regras 1-3 e devolve (forma_pagamento, conta) já preenchidos.
 
-    Ordem: Ifood preenche VR primeiro (regra 2, tem prioridade); depois, cada
-    campo que ficou em branco recebe o próprio padrão da regra 1 — forma vira
-    Cartão de crédito, conta vira Nubank — independentemente do outro campo ter
-    sido dito ou não. É a leitura distributiva da regra 3 ("as regras acima só
-    preenchem o que ficou em branco"): nenhum lançamento fica sem forma ou sem
-    conta só porque só um dos dois foi mencionado.
+    Ordem: conta Ifood preenche forma VR primeiro (regra 2); o espelho também
+    vale — forma VR sem conta dita preenche conta Ifood, porque VR só existe
+    aqui via Ifood. Depois, cada campo que ainda ficou em branco recebe o
+    próprio padrão da regra 1 — forma vira Cartão de crédito, conta vira
+    Nubank — independentemente do outro campo ter sido dito ou não. É a
+    leitura distributiva da regra 3 ("as regras acima só preenchem o que
+    ficou em branco"): nenhum lançamento fica sem forma ou sem conta só
+    porque só um dos dois foi mencionado.
     """
     conta = str(conta_bruta or "").strip()
     forma = normalizar_forma(forma_bruta)
@@ -171,6 +173,9 @@ def aplicar_regras(forma_bruta, conta_bruta) -> tuple:
         if not forma:
             forma = config.FORMA_DA_CONTA_VR
         return forma, conta
+
+    if forma == config.FORMA_DA_CONTA_VR and not conta:
+        return forma, config.CONTA_VR
 
     if not forma:
         forma = config.FORMA_PADRAO

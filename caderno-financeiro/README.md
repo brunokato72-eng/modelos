@@ -146,8 +146,13 @@ Tudo abaixo acontece depois, em Python, sempre igual:
 > preenchem o que ficou em branco"): cada campo em branco recebe o próprio
 > padrão da regra 1 — forma ausente vira `Cartão de crédito`, conta ausente
 > vira `Nubank` — independente do outro campo ter sido dito. Nenhum lançamento
-> fica sem forma ou sem conta por causa disso. Está isolado em
-> `regras.aplicar_regras` se você quiser outro comportamento.
+> fica sem forma ou sem conta por causa disso.
+>
+> Uma exceção a esse padrão genérico: forma `VR` mencionada sem conta dita
+> preenche conta `Ifood` (não o `Nubank` padrão) — é o espelho da regra 2, já
+> que VR só existe aqui via Ifood. Se uma conta diferente for dita
+> explicitamente junto com VR, ela prevalece normalmente (regra 3). Está tudo
+> isolado em `regras.aplicar_regras` se você quiser outro comportamento.
 
 **Parcelamento** (`regras.dividir_parcelas` + `datas.somar_meses`): o valor total
 é dividido **em centavos inteiros** e a sobra vai pra última parcela, então a soma
@@ -238,7 +243,7 @@ caderno_financeiro/
   servidor.py         API HTTP (Flask) + arquivos do PWA — acesso remoto
   cli.py              comandos
 web/                  PWA: index.html, app.js, styles.css, manifest, ícones
-tests/                98 testes, nenhum deles chama o modelo de verdade
+tests/                99 testes, nenhum deles chama o modelo de verdade
 exemplos/             CSV de exemplo no formato do histórico
 ```
 

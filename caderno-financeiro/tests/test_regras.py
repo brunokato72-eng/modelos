@@ -36,6 +36,14 @@ class TestRegrasDeterministicas(unittest.TestCase):
         self.assertEqual(forma, "Pix")
         self.assertEqual(conta, config.CONTA_PADRAO)
 
+    def test_forma_vr_sem_conta_dita_preenche_ifood(self):
+        # VR só existe aqui via Ifood — "vr" sem dizer a conta não pode cair
+        # no padrão genérico (Nubank), tem que ser Ifood
+        self.assertEqual(aplicar_regras("vr", None), ("VR", config.CONTA_VR))
+        self.assertEqual(aplicar_regras("VR", ""), ("VR", config.CONTA_VR))
+        # mas se uma conta diferente for dita explicitamente, ela prevalece (regra 3)
+        self.assertEqual(aplicar_regras("vr", "Outro banco"), ("VR", "Outro banco"))
+
 
 class TestNormalizacoes(unittest.TestCase):
     def test_categoria_ignora_acento_e_caixa(self):
