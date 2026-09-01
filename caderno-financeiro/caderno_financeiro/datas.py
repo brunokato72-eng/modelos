@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from . import config
 
 RE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -26,7 +29,9 @@ def somar_meses(data_iso: str, n: int) -> str:
 
 
 def hoje_iso() -> str:
-    return date.today().isoformat()
+    """Data de hoje no fuso do usuário (`config.FUSO_HORARIO`), não no fuso do
+    processo — o servidor pode estar numa VPS em UTC, o usuário não está."""
+    return datetime.now(ZoneInfo(config.FUSO_HORARIO)).date().isoformat()
 
 
 def mes_de(data_iso: str) -> str:

@@ -1,7 +1,9 @@
 import unittest
+from datetime import datetime, timezone
+from unittest import mock
 
-from caderno_financeiro.datas import (dias_entre, mes_anterior, somar_meses,
-                                      validar_iso, validar_mes)
+from caderno_financeiro.datas import (dias_entre, hoje_iso, mes_anterior,
+                                      somar_meses, validar_iso, validar_mes)
 
 
 class TestSomarMeses(unittest.TestCase):
@@ -29,6 +31,21 @@ class TestSomarMeses(unittest.TestCase):
             data = somar_meses("2026-01-31", passo)
             self.assertLessEqual(int(data[8:10]), 31)
             validar_iso(data)
+
+
+class TestHojeIso(unittest.TestCase):
+    def test_usa_fuso_do_usuario_nao_o_do_servidor(self):
+        # bug real, achado em produção: a VPS roda com relógio em UTC. Às
+        # 22:13 de 31/08 em Brasília (UTC-3), o relógio do servidor já
+        # marcava 01:13 de 01/09 — e hoje_iso() classificava um lançamento
+        # feito à noite como sendo do mês seguinte. hoje_iso() tem que
+        # devolver a data de Brasília, nunca a do relógio do processo.
+        instante_utc = datetime(2026, 9, 1, 1, 13, 47, tzinfo=timezone.utc)
+        with mock.patch("caderno_financeiro.datas.datetime") as datetime_mock:
+            datetime_mock.now.side_effect = (
+                lambda tz=None: instante_utc.astimezone(tz) if tz else instante_utc
+            )
+            self.assertEqual(hoje_iso(), "2026-08-31")
 
 
 class TestAuxiliares(unittest.TestCase):

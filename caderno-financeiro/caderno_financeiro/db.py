@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from zoneinfo import ZoneInfo
 
 from . import config
 from .datas import dias_entre
@@ -113,7 +114,9 @@ def banco(caminho: Optional[Path] = None, *, criar_esquema: bool = True):
 
 
 def agora() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    """Timestamp de bookkeeping (`criadoEm`) no fuso do usuário, mesma razão
+    de `datas.hoje_iso()` — não usa o fuso do processo/servidor."""
+    return datetime.now(ZoneInfo(config.FUSO_HORARIO)).isoformat(timespec="seconds")
 
 
 def inserir(conexao: sqlite3.Connection, lancamentos: Iterable[Dict[str, Any]]) -> int:

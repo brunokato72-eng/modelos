@@ -58,6 +58,12 @@ FORMA_DA_CONTA_VR = "VR"
 MODELO_EXTRACAO = os.environ.get("CADERNO_MODELO_EXTRACAO", "haiku")
 MODELO_ANALISE = os.environ.get("CADERNO_MODELO_ANALISE", "sonnet")
 
+# "Hoje" e "agora" são sempre calculados neste fuso, não no fuso do sistema que
+# roda o processo. Isso importa de verdade quando o servidor mora numa VPS em
+# UTC: sem isso, qualquer registro feito à noite (horário de Brasília) já cai
+# no dia seguinte pro relógio do servidor, e o lançamento vai pro mês errado.
+FUSO_HORARIO = os.environ.get("CADERNO_TIMEZONE", "America/Sao_Paulo")
+
 
 def diretorio_dados() -> Path:
     """Diretório onde vivem banco, backups e estado. Sobrescrevível por env."""
