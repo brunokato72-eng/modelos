@@ -248,7 +248,15 @@ Extraia os lançamentos citados. Regras:
   mencionada, use hoje.
 - `tipo`: "Despesa" para gasto, "Receita" para entrada de dinheiro
   (salário, reembolso, restituição, venda, rendimento).
-- `categoria`: escolha uma da lista permitida, coerente com o tipo.
+- `categoria`: escolha uma da lista permitida, coerente com o tipo. Preste
+  atenção nesses pares que costumam ser confundidos:
+  - `Alimentação` é refeição de verdade (almoço, jantar, restaurante, delivery
+    tipo iFood de comida). `Besteiras` é lanche/guloseima/coisa pequena e
+    supérflua (pirulito, doce, salgadinho, chocolate, sorvete, biscoito) —
+    mesmo se comprado num app de comida como iFood, se for só um doce/lanche
+    avulso é `Besteiras`, não `Alimentação`.
+  - `Mercado` é compra de supermercado pra cozinhar em casa. `Alimentação` é
+    comida já pronta pra comer (restaurante, delivery de refeição, lanchonete).
 - `formaPagamento`: só preencha se a mensagem disser (pix, crédito, débito,
   dinheiro, VR/vale). Caso contrário, null.
 - `conta`: só preencha se a mensagem citar o nome do cartão/conta/carteira
