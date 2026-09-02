@@ -326,7 +326,22 @@ tailscale ip -4                                  # o endereço que o celular vai
 ```
 
 Rodar o script de novo depois (ex.: após um `git pull` com atualizações) é
-seguro — ele reaproveita o que já existe.
+seguro — ele reaproveita o que já existe. Numa VPS já configurada, rodar de
+novo só reinicia o serviço e confirma que está tudo certo, sem repetir os
+passos manuais.
+
+### Atualização automática
+
+O instalador já deixa isso configurado: um timer do systemd
+(`caderno-auto-atualizar.timer`) roda `deploy/auto-atualizar.sh` a cada 5
+minutos, que confere se o branch em uso tem commit novo no GitHub e, se
+tiver, baixa e reinicia o serviço sozinho — nenhuma ação manual na VPS depois
+de um `git push`. Pra acompanhar:
+
+```bash
+sudo systemctl status caderno-auto-atualizar.timer   # confirma que está ativo
+sudo journalctl -u caderno-auto-atualizar.service -n 20   # log das últimas checagens
+```
 
 ### Peças
 

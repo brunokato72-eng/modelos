@@ -65,7 +65,7 @@ case "$DISTRO" in
     ;;
   ol|rhel|centos|fedora|rocky|almalinux)
     if command -v dnf >/dev/null 2>&1; then GERENCIADOR=dnf; else GERENCIADOR=yum; fi
-    sudo "$GERENCIADOR" install -y python3 python3-pip git curl gcc make
+    sudo "$GERENCIADOR" install -y python3 python3-pip git curl gcc make policycoreutils-python-utils
     ;;
   *)
     amarelo "distro '$DISTRO' não reconhecida — segue tentando, mas instale manualmente"
@@ -112,6 +112,17 @@ fi
 "$VENV/bin/pip" install --quiet -e "$RAIZ_PROJETO[web,xlsx]"
 verde "pacote instalado no virtualenv ($VENV)"
 
+# Em distros com SELinux (Oracle Linux, RHEL...), um executável dentro da
+# pasta pessoal do usuário fica marcado como "user_home_t" — o systemd não
+# tem permissão de rodar nada com esse rótulo. Sem isso, o serviço sobe e
+# morre na hora com "203/EXEC", sem mensagem clara do motivo.
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ] && command -v semanage >/dev/null 2>&1; then
+  echo "SELinux enforcing detectado — liberando execução em $VENV/bin ..."
+  sudo semanage fcontext -a -t bin_t "$VENV/bin(/.*)?" 2>/dev/null || true
+  sudo restorecon -Rv "$VENV/bin" > /dev/null
+  verde "contexto SELinux ajustado"
+fi
+
 # ---------------------------------------------------------------------------
 # 5) Tailscale
 # ---------------------------------------------------------------------------
@@ -153,30 +164,89 @@ sudo systemctl daemon-reload
 verde "serviço criado (ainda não ativado — falta o PIN, ver abaixo)."
 
 # ---------------------------------------------------------------------------
-# passos manuais que faltam
+# 7) auto-atualização (confere o git a cada 5 min e reinicia sozinho)
 # ---------------------------------------------------------------------------
 
+UNIDADE_ATUALIZAR="/etc/systemd/system/caderno-auto-atualizar.service"
+TIMER_ATUALIZAR="/etc/systemd/system/caderno-auto-atualizar.timer"
+echo "criando auto-atualização (timer systemd, a cada 5 min) ..."
+
+sudo tee "$UNIDADE_ATUALIZAR" > /dev/null <<EOF
+[Unit]
+Description=Verifica e aplica atualizações do Caderno Financeiro
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$RAIZ_PROJETO
+Environment=PATH=$NODE_BIN_DIR:$VENV/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$RAIZ_PROJETO/deploy/auto-atualizar.sh
+EOF
+
+sudo tee "$TIMER_ATUALIZAR" > /dev/null <<EOF
+[Unit]
+Description=Roda a checagem de atualização do Caderno Financeiro a cada 5 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+chmod +x "$RAIZ_PROJETO/deploy/auto-atualizar.sh"
+sudo systemctl daemon-reload
+sudo systemctl enable --now caderno-auto-atualizar.timer
+verde "auto-atualização ativada — a VPS confere o GitHub sozinha a cada 5 min."
+
+# ---------------------------------------------------------------------------
+# passos manuais que faltam (só na primeira instalação)
+# ---------------------------------------------------------------------------
+
+JA_CONFIGURADO=false
+if "$VENV/bin/python3" - <<PYEOF 2>/dev/null
+import sys
+sys.path.insert(0, "$RAIZ_PROJETO")
+from caderno_financeiro import auth, db
+with db.banco() as conexao:
+    sys.exit(0 if auth.pin_configurado(conexao) else 1)
+PYEOF
+then
+  JA_CONFIGURADO=true
+fi
+
 echo
-verde "=== instalação de dependências concluída ==="
-echo
-amarelo "faltam 3 passos manuais, nessa ordem:"
-echo
-echo "1) Login do claude com sua assinatura (é interativo, abre uma URL):"
-echo "     claude"
-echo "     (dentro da sessão, rode /login e siga a URL que aparecer)"
-echo
-echo "2) Definir o PIN de acesso ao servidor:"
-echo "     $VENV/bin/caderno definir-pin"
-echo
-echo "3) Autenticar o Tailscale nesta VM (mesma conta do seu celular):"
-echo "     sudo tailscale up"
-echo "     (vai imprimir uma URL — abra em qualquer navegador logado na sua conta Tailscale)"
-echo
-echo "Depois dos 3 passos, ative o serviço:"
-echo "     sudo systemctl enable --now caderno-financeiro"
-echo "     sudo systemctl status caderno-financeiro"
-echo
-echo "E confira o endereço da tailnet desta VM:"
-echo "     tailscale ip -4"
-echo
-echo "No celular (com Tailscale ativo), acesse http://<esse-ip-ou-nome>:$PORTA_PADRAO"
+if [ "$JA_CONFIGURADO" = true ]; then
+  verde "=== atualização concluída — já estava tudo configurado, nada mais a fazer ==="
+  echo "auto-atualização ativa: a VPS confere o GitHub sozinha a cada 5 min a partir de agora."
+  if systemctl is-active --quiet caderno-financeiro; then
+    sudo systemctl restart caderno-financeiro
+    echo "serviço reiniciado pra pegar qualquer mudança de código mais recente."
+  fi
+else
+  verde "=== instalação de dependências concluída ==="
+  echo
+  amarelo "faltam 3 passos manuais, nessa ordem:"
+  echo
+  echo "1) Login do claude com sua assinatura (é interativo, abre uma URL):"
+  echo "     claude"
+  echo "     (dentro da sessão, rode /login e siga a URL que aparecer)"
+  echo
+  echo "2) Definir o PIN de acesso ao servidor:"
+  echo "     $VENV/bin/caderno definir-pin"
+  echo
+  echo "3) Autenticar o Tailscale nesta VM (mesma conta do seu celular):"
+  echo "     sudo tailscale up"
+  echo "     (vai imprimir uma URL — abra em qualquer navegador logado na sua conta Tailscale)"
+  echo
+  echo "Depois dos 3 passos, ative o serviço:"
+  echo "     sudo systemctl enable --now caderno-financeiro"
+  echo "     sudo systemctl status caderno-financeiro"
+  echo
+  echo "E confira o endereço da tailnet desta VM:"
+  echo "     tailscale ip -4"
+  echo
+  echo "No celular (com Tailscale ativo), acesse http://<esse-ip-ou-nome>:$PORTA_PADRAO"
+fi
