@@ -279,6 +279,87 @@ Extraia os lançamentos citados. Regras:
 
 
 # --------------------------------------------------------------------------
+# 1b) Categorização em lote de transações já confirmadas (sincronização Pluggy)
+# --------------------------------------------------------------------------
+#
+# Diferente de extrair_lancamentos: aqui o valor/data/tipo já vêm do banco,
+# não são inventados nem interpretados — só a categoria precisa de IA. E como
+# uma sincronização diária pode trazer dezenas de transações de uma vez, isso
+# categoriza em lote (uma chamada, várias transações), não uma chamada por
+# transação — mais barato e mais rápido.
+
+SISTEMA_CATEGORIZAR = (
+    "Você categoriza transações bancárias que já vieram confirmadas do extrato "
+    "do banco — não são digitadas pelo usuário, então o valor e a data já estão "
+    "certos, só falta a categoria. Devolve também um grau de confiança de 0 a 1 "
+    "pra cada uma: seja honesto — descrição genérica ou ambígua (ex.: só o nome "
+    "de uma maquininha, um código, uma sigla que não identifica o comércio) "
+    "merece confiança baixa, não uma categoria chutada com confiança alta."
+)
+
+_SCHEMA_CATEGORIZAR = {
+    "type": "object",
+    "properties": {
+        "classificacoes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "indice": {"type": "integer"},
+                    "categoria": {"type": "string", "enum": list(config.CATEGORIAS)},
+                    "confianca": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["indice", "categoria", "confianca"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["classificacoes"],
+    "additionalProperties": False,
+}
+
+_PADRAO_CATEGORIZACAO = {"categoria": "Outros", "confianca": 0.0}
+
+
+def categorizar_transacoes(transacoes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """`transacoes`: lista de {"descricao", "valor", "tipo"}. Devolve lista
+    paralela (mesma ordem/tamanho) de {"categoria", "confianca"} — nunca menos
+    itens do que a entrada, mesmo se o modelo pular algum índice."""
+    if not transacoes:
+        return []
+
+    linhas = "\n".join(
+        f"{i}. [{t['tipo']}] \"{t['descricao']}\" — R$ {t['valor']:.2f}"
+        for i, t in enumerate(transacoes)
+    )
+    prompt = f"""Categorize cada transação abaixo (já confirmada no extrato bancário):
+
+{linhas}
+
+Devolva uma classificação por índice (0 a {len(transacoes) - 1}), todas presentes."""
+
+    resposta = chamar(
+        prompt,
+        sistema=SISTEMA_CATEGORIZAR,
+        modelo=config.MODELO_EXTRACAO,
+        schema=_SCHEMA_CATEGORIZAR,
+    )
+    dados = json_da_resposta(resposta)
+    classificacoes = dados.get("classificacoes") if isinstance(dados, dict) else None
+    por_indice = {
+        c["indice"]: c
+        for c in (classificacoes or [])
+        if isinstance(c, dict) and "indice" in c
+    }
+    return [
+        {"categoria": por_indice[i]["categoria"], "confianca": por_indice[i]["confianca"]}
+        if i in por_indice
+        else dict(_PADRAO_CATEGORIZACAO)
+        for i in range(len(transacoes))
+    ]
+
+
+# --------------------------------------------------------------------------
 # 2) Pergunta -> plano de consultas (a IA descreve filtros, não calcula)
 # --------------------------------------------------------------------------
 
