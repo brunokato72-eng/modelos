@@ -551,6 +551,91 @@ def cmd_revisar(args) -> int:
     return 0
 
 
+def cmd_orcamento(args) -> int:
+    with db.banco(args.banco) as conexao:
+        if args.definir:
+            categoria, limite_texto = args.definir
+            try:
+                limite = float(limite_texto.replace(",", "."))
+                db.definir_orcamento(conexao, categoria, limite)
+            except ValueError as erro:
+                print(pintar(f"erro: {erro}", VERMELHO))
+                return 1
+            print(pintar(f"orçamento de {categoria} definido em {formatar(limite)}.", VERDE))
+            return 0
+
+        if args.remover:
+            if not db.remover_orcamento(conexao, args.remover):
+                print(pintar(f"não tinha orçamento definido pra {args.remover}", VERMELHO))
+                return 1
+            print(pintar("orçamento removido.", VERDE))
+            return 0
+
+        orcamentos = db.listar_orcamentos(conexao)
+        lancamentos = db.listar(conexao)
+
+    mes = validar_mes(args.mes) if args.mes else mes_atual()
+    progresso = estatisticas.progresso_orcamentos(lancamentos, orcamentos, mes)
+    if args.json:
+        imprimir_json(progresso)
+        return 0
+    if not progresso:
+        print(pintar("nenhum orçamento definido ainda — `caderno orcamento --definir <categoria> <limite>`", AMARELO))
+        return 0
+    print(pintar(f"Orçamentos de {mes}", NEGRITO))
+    for item in progresso:
+        cor = VERMELHO if item["estourado"] else (AMARELO if item["percentual"] >= 80 else VERDE)
+        barra = "█" * max(0, min(25, int(round(item["percentual"] / 4))))
+        percentual_texto = f"{item['percentual']:5.1f}%"
+        print(f"  {item['categoria']:<16} {formatar(item['gasto']):>12} / {formatar(item['limite']):<12} "
+              f"{pintar(percentual_texto, cor)}  {pintar(barra, cor)}")
+    return 0
+
+
+def cmd_saude(args) -> int:
+    mes = validar_mes(args.mes) if args.mes else mes_atual()
+    with db.banco(args.banco) as conexao:
+        lancamentos = db.listar(conexao)
+    resultado = estatisticas.saude_financeira(lancamentos, mes)
+    if args.json:
+        imprimir_json(resultado)
+        return 0
+
+    cor = VERDE if resultado["classificacao"] == "boa" else (
+        AMARELO if resultado["classificacao"] == "atenção" else VERMELHO)
+    print(pintar(f"\nSaúde financeira — {mes}", NEGRITO))
+    print(f"  pontuação: {pintar(str(resultado['pontuacao']), cor)}/100 ({resultado['classificacao']})")
+    if resultado["taxaPoupanca"] is not None:
+        print(f"  taxa de poupança: {resultado['taxaPoupanca']}%")
+    if resultado["tendenciaDespesas"]:
+        print(f"  tendência de despesas: {resultado['tendenciaDespesas']}")
+    if resultado["comprometimentoFuturoPercentual"] is not None:
+        print(f"  parcelas futuras comprometem: {resultado['comprometimentoFuturoPercentual']}% da receita média")
+    for alerta in resultado["alertas"]:
+        print(pintar(f"  ⚠ {alerta}", AMARELO))
+    print()
+    return 0
+
+
+def cmd_investimentos(args) -> int:
+    with db.banco(args.banco) as conexao:
+        posicoes = db.listar_posicoes_investimento(conexao)
+    if args.json:
+        imprimir_json(posicoes)
+        return 0
+    if not posicoes:
+        print(pintar("nenhuma posição de investimento sincronizada ainda — rode `caderno pluggy-sincronizar "
+                     "--investimentos`.", AMARELO))
+        return 0
+    print(pintar("Investimentos", NEGRITO))
+    for posicao in posicoes:
+        print(f"  {posicao['nome']:<24} {posicao['tipo']:<16} {formatar(posicao['valor']):>14}  "
+              f"({posicao['conta']})")
+    total = sum(p["valor"] for p in posicoes)
+    print(pintar(f"\ntotal: {formatar(total)}", NEGRITO))
+    return 0
+
+
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
@@ -661,6 +746,22 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--categoria", help="categoria a atribuir (usado com --id)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_revisar)
+
+    p = subcomandos.add_parser("orcamento", help="define/lista limites de gasto por categoria")
+    p.add_argument("--definir", nargs=2, metavar=("CATEGORIA", "LIMITE"))
+    p.add_argument("--remover", metavar="CATEGORIA")
+    p.add_argument("-m", "--mes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_orcamento)
+
+    p = subcomandos.add_parser("saude", help="painel de saúde financeira (sem IA)")
+    p.add_argument("-m", "--mes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_saude)
+
+    p = subcomandos.add_parser("investimentos", help="lista posições de investimento sincronizadas via Pluggy")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_investimentos)
 
     p = subcomandos.add_parser("servir", help="sobe o servidor web local (API + PWA) pra acesso remoto")
     p.add_argument("--host", default="0.0.0.0", help="endereço pra escutar (padrão: todas as interfaces)")

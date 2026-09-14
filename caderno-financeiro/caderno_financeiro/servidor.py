@@ -149,6 +149,47 @@ def criar_app() -> Flask:
             **estatisticas.visao_geral(db.listar(_conexao())),
         })
 
+    # -- painel: saúde financeira / orçamentos / investimentos (sem IA) ------
+
+    @app.get("/api/saude")
+    def _saude():
+        mes = request.args.get("mes")
+        mes = validar_mes(mes) if mes else mes_atual()
+        return jsonify(estatisticas.saude_financeira(db.listar(_conexao()), mes))
+
+    @app.get("/api/orcamentos")
+    def _listar_orcamentos():
+        conexao = _conexao()
+        mes = request.args.get("mes")
+        mes = validar_mes(mes) if mes else mes_atual()
+        progresso = estatisticas.progresso_orcamentos(db.listar(conexao), db.listar_orcamentos(conexao), mes)
+        return jsonify(progresso)
+
+    @app.post("/api/orcamentos")
+    def _definir_orcamento():
+        corpo = request.get_json(silent=True) or {}
+        try:
+            limite = float(corpo.get("limite"))
+        except (TypeError, ValueError):
+            return _erro("limite inválido")
+        try:
+            db.definir_orcamento(_conexao(), str(corpo.get("categoria", "")), limite)
+        except ValueError as erro:
+            return _erro(str(erro))
+        return jsonify({"ok": True})
+
+    @app.delete("/api/orcamentos/<categoria>")
+    def _remover_orcamento(categoria: str):
+        removido = db.remover_orcamento(_conexao(), categoria)
+        if not removido:
+            return _erro("não tinha orçamento definido pra essa categoria", 404)
+        return jsonify({"ok": True})
+
+    @app.get("/api/investimentos")
+    def _investimentos():
+        posicoes = db.listar_posicoes_investimento(_conexao())
+        return jsonify({"posicoes": posicoes, "total": sum(p["valor"] for p in posicoes)})
+
     @app.delete("/api/lancamentos/<id_lancamento>")
     def _remover(id_lancamento: str):
         conexao = _conexao()

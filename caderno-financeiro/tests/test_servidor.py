@@ -133,6 +133,44 @@ class TestServidor(unittest.TestCase):
         r = self.cliente.post("/api/perguntar", json={"pergunta": "e ai?"}, headers=self.auth)
         self.assertEqual(r.status_code, 409)
 
+    def test_saude(self):
+        r = self.cliente.get("/api/saude?mes=2026-08", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        corpo = r.get_json()
+        self.assertIn("pontuacao", corpo)
+        self.assertIn("classificacao", corpo)
+
+    def test_orcamentos_definir_listar_e_remover(self):
+        r = self.cliente.post("/api/orcamentos", json={"categoria": "Mercado", "limite": 800}, headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+
+        r = self.cliente.get("/api/orcamentos?mes=2026-08", headers=self.auth)
+        progresso = r.get_json()
+        self.assertEqual(len(progresso), 1)
+        self.assertEqual(progresso[0]["gasto"], 50.0)  # lançamento do setUp (Mercado, R$ 50)
+
+        r = self.cliente.delete("/api/orcamentos/Mercado", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        r = self.cliente.delete("/api/orcamentos/Mercado", headers=self.auth)
+        self.assertEqual(r.status_code, 404)
+
+    def test_orcamento_categoria_invalida_da_400(self):
+        r = self.cliente.post(
+            "/api/orcamentos", json={"categoria": "Não Existe", "limite": 100}, headers=self.auth
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_investimentos(self):
+        with db.banco(self.banco) as conexao:
+            db.inserir_posicoes_investimento(conexao, [
+                {"id": "p1", "data": "2026-08-01", "itemId": "item-1", "conta": "XP",
+                 "tipo": "Ações", "nome": "PETR4", "valor": 500.0},
+            ])
+        r = self.cliente.get("/api/investimentos", headers=self.auth)
+        corpo = r.get_json()
+        self.assertEqual(corpo["total"], 500.0)
+        self.assertEqual(len(corpo["posicoes"]), 1)
+
 
 
 

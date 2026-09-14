@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS investimentos_posicoes (
     quantidade   REAL,
     criado_em    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS orcamentos (
+    categoria     TEXT PRIMARY KEY,
+    limite        REAL NOT NULL,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+);
 """
 
 ESQUEMA_INDICES = """
@@ -419,5 +426,34 @@ def listar_posicoes_investimento(
         ) atual ON ip.item_id = atual.item_id AND ip.nome = atual.nome AND ip.data = atual.data_max
         ORDER BY ip.conta, ip.nome
         """
+    )
+    return [dict(l) for l in linhas]
+
+
+# --------------------------------------------------------------------------
+# orçamentos (limite mensal por categoria — vale todo mês até ser redefinido)
+# --------------------------------------------------------------------------
+
+def definir_orcamento(conexao: sqlite3.Connection, categoria: str, limite: float) -> None:
+    if categoria not in config.CATEGORIAS_DESPESA:
+        raise ValueError(f"categoria inválida pra orçamento: {categoria!r}")
+    if limite <= 0:
+        raise ValueError("o limite do orçamento precisa ser maior que zero")
+    agora_str = agora()
+    conexao.execute(
+        "INSERT INTO orcamentos (categoria, limite, criado_em, atualizado_em) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(categoria) DO UPDATE SET limite = excluded.limite, atualizado_em = excluded.atualizado_em",
+        (categoria, limite, agora_str, agora_str),
+    )
+
+
+def remover_orcamento(conexao: sqlite3.Connection, categoria: str) -> bool:
+    cursor = conexao.execute("DELETE FROM orcamentos WHERE categoria = ?", (categoria,))
+    return cursor.rowcount > 0
+
+
+def listar_orcamentos(conexao: sqlite3.Connection) -> List[Dict[str, Any]]:
+    linhas = conexao.execute(
+        "SELECT categoria, limite, criado_em, atualizado_em FROM orcamentos ORDER BY categoria"
     )
     return [dict(l) for l in linhas]
