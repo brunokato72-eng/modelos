@@ -152,6 +152,7 @@ User=$USER
 WorkingDirectory=$RAIZ_PROJETO
 Environment=PATH=$NODE_BIN_DIR:$VENV/bin:/usr/local/bin:/usr/bin:/bin
 Environment=CADERNO_HOME=$HOME/.caderno-financeiro
+EnvironmentFile=-$HOME/.caderno-financeiro/pluggy.env
 ExecStart=$VENV/bin/caderno servir --host 0.0.0.0 --porta $PORTA_PADRAO
 Restart=on-failure
 RestartSec=5
@@ -202,6 +203,50 @@ sudo systemctl enable --now caderno-auto-atualizar.timer
 verde "auto-atualização ativada — a VPS confere o GitHub sozinha a cada 5 min."
 
 # ---------------------------------------------------------------------------
+# 8) sincronização diária via Meu Pluggy (Open Finance) — opcional
+# ---------------------------------------------------------------------------
+# Só faz algo se PLUGGY_CLIENT_ID/SECRET estiverem em
+# ~/.caderno-financeiro/pluggy.env (ver instruções no fim). Sem isso, o timer
+# roda 1x por dia e sai sem fazer nada — instalar antes de configurar o
+# Pluggy é seguro.
+
+UNIDADE_PLUGGY="/etc/systemd/system/caderno-pluggy-sincronizar.service"
+TIMER_PLUGGY="/etc/systemd/system/caderno-pluggy-sincronizar.timer"
+echo "criando sincronização diária via Meu Pluggy (timer systemd) ..."
+
+sudo tee "$UNIDADE_PLUGGY" > /dev/null <<EOF
+[Unit]
+Description=Sincroniza extrato bancário e investimentos via Meu Pluggy
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$RAIZ_PROJETO
+Environment=PATH=$NODE_BIN_DIR:$VENV/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CADERNO_HOME=$HOME/.caderno-financeiro
+EnvironmentFile=-$HOME/.caderno-financeiro/pluggy.env
+ExecStart=$RAIZ_PROJETO/deploy/pluggy-sincronizar.sh
+EOF
+
+sudo tee "$TIMER_PLUGGY" > /dev/null <<EOF
+[Unit]
+Description=Roda a sincronização Pluggy 1x por dia
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+chmod +x "$RAIZ_PROJETO/deploy/pluggy-sincronizar.sh"
+sudo systemctl daemon-reload
+sudo systemctl enable --now caderno-pluggy-sincronizar.timer
+verde "timer de sincronização Pluggy ativado (roda 1x por dia; sem efeito até você configurar as credenciais)."
+
+# ---------------------------------------------------------------------------
 # passos manuais que faltam (só na primeira instalação)
 # ---------------------------------------------------------------------------
 
@@ -250,3 +295,20 @@ else
   echo
   echo "No celular (com Tailscale ativo), acesse http://<esse-ip-ou-nome>:$PORTA_PADRAO"
 fi
+
+echo
+amarelo "opcional: sincronização automática via Meu Pluggy (Open Finance)"
+echo "  1) Pegue seu Client ID e Client Secret no dashboard do Meu Pluggy."
+echo "  2) Crie o arquivo de credenciais DIRETO NESTA VPS (nunca cole esses"
+echo "     valores em chat/IA — são como a senha da sua conta bancária conectada):"
+echo "       nano ~/.caderno-financeiro/pluggy.env"
+echo "     e escreva dentro (substituindo pelos seus valores reais):"
+echo "       PLUGGY_CLIENT_ID=seu-client-id"
+echo "       PLUGGY_CLIENT_SECRET=seu-client-secret"
+echo "  3) Proteja o arquivo e reinicie os serviços pra ele valer:"
+echo "       chmod 600 ~/.caderno-financeiro/pluggy.env"
+echo "       sudo systemctl restart caderno-financeiro caderno-pluggy-sincronizar.service"
+echo "  A partir daí a sincronização roda sozinha 1x por dia. Pra rodar na hora:"
+echo "       $VENV/bin/caderno pluggy-sincronizar"
+echo "  E pra ver o que ficou pendente de revisão:"
+echo "       $VENV/bin/caderno revisar"

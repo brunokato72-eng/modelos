@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import auth, config, consulta, db, estatisticas, exportador, ia, importador, registro
+from . import pluggy_cliente as pc
+from . import pluggy_sync
 from .calculadora import OPERACOES, executar_calculo
 from .datas import mes_atual, validar_mes
 from .valores import formatar
@@ -442,6 +444,113 @@ def cmd_testar_toolcall(args) -> int:
     return 1
 
 
+def cmd_pluggy_sincronizar(args) -> int:
+    with db.banco(args.banco) as conexao:
+        try:
+            resultado = pluggy_sync.sincronizar(conexao)
+        except pc.ErroPluggy as erro:
+            print(pintar(f"erro: {erro}", VERMELHO))
+            return 1
+        investimentos = None
+        if args.investimentos:
+            try:
+                investimentos = pluggy_sync.sincronizar_investimentos(conexao)
+            except pc.ErroPluggy as erro:
+                print(pintar(f"erro ao sincronizar investimentos: {erro}", VERMELHO))
+
+    if args.json:
+        if investimentos is not None:
+            resultado["investimentosSincronizados"] = investimentos
+        imprimir_json(resultado)
+        return 0
+
+    print(pintar("Sincronização Pluggy", NEGRITO))
+    print(f"  conexões processadas: {resultado['itemsProcessados']}")
+    print(f"  lançamentos novos:    {pintar(str(resultado['transacoesNovas']), VERDE)}")
+    if resultado["paraRevisao"]:
+        print(f"  aguardando revisão:   {pintar(str(resultado['paraRevisao']), AMARELO)} "
+              f"(rode `caderno revisar`)")
+    if investimentos is not None:
+        print(f"  posições de investimento salvas: {investimentos}")
+    for erro in resultado["erros"]:
+        print(pintar(f"  erro: {erro}", VERMELHO))
+    return 0
+
+
+def cmd_pluggy_status(args) -> int:
+    with db.banco(args.banco) as conexao:
+        conexoes = db.listar_conexoes_pluggy(conexao)
+        pendentes = db.contar_pendentes_revisao(conexao)
+
+    if args.json:
+        imprimir_json({"conexoes": conexoes, "pendentesRevisao": pendentes})
+        return 0
+
+    if not conexoes:
+        print(pintar("nenhuma conexão Pluggy registrada ainda — rode `caderno pluggy-sincronizar`.", AMARELO))
+    else:
+        print(pintar("Conexões Pluggy", NEGRITO))
+        for conexao_info in conexoes:
+            ultima = conexao_info["ultima_sincronizacao"] or pintar("nunca sincronizada", CINZA)
+            print(f"  {conexao_info['instituicao']:<20} {conexao_info['status']:<8} última sync: {ultima}")
+    if pendentes:
+        print(pintar(f"\n{pendentes} lançamento(s) aguardando revisão — rode `caderno revisar`.", AMARELO))
+    return 0
+
+
+def cmd_revisar(args) -> int:
+    if args.id:
+        if not args.categoria:
+            print(pintar("passe --categoria junto com --id", VERMELHO))
+            return 1
+        with db.banco(args.banco) as conexao:
+            ok = db.resolver_revisao(conexao, args.id, args.categoria)
+        if not ok:
+            print(pintar(f"não achei lançamento pendente com id {args.id}", VERMELHO))
+            return 1
+        print(pintar("categoria atualizada.", VERDE))
+        return 0
+
+    with db.banco(args.banco) as conexao:
+        pendentes = db.listar_pendentes_revisao(conexao)
+        if args.json:
+            imprimir_json(pendentes)
+            return 0
+        if not pendentes:
+            print(pintar("nada pendente de revisão.", VERDE))
+            return 0
+
+        if not sys.stdin.isatty():
+            for lanc in pendentes:
+                print(_linha_lancamento(lanc) + pintar(f"  id {lanc['id']}", CINZA))
+            return 0
+
+        print(pintar(f"{len(pendentes)} lançamento(s) pendente(s) — Enter mantém a categoria sugerida, "
+                     "'p' pula, 'q' sai.\n", CINZA))
+        for lanc in pendentes:
+            print(_linha_lancamento(lanc))
+            categorias = list(config.CATEGORIAS_RECEITA if lanc["tipo"] == config.TIPO_RECEITA
+                               else config.CATEGORIAS_DESPESA)
+            for i, cat in enumerate(categorias, 1):
+                marca = " *" if cat == lanc["categoria"] else ""
+                print(f"    {i:>2}) {cat}{marca}")
+            escolha = input(pintar("  categoria> ", NEGRITO)).strip()
+            if escolha.lower() == "q":
+                break
+            if escolha.lower() == "p" or not escolha:
+                continue
+            if escolha.isdigit() and 1 <= int(escolha) <= len(categorias):
+                nova_categoria = categorias[int(escolha) - 1]
+            elif escolha in categorias:
+                nova_categoria = escolha
+            else:
+                print(pintar("  categoria inválida, pulando.", AMARELO))
+                continue
+            db.resolver_revisao(conexao, lanc["id"], nova_categoria)
+            print(pintar(f"  -> {nova_categoria}\n", VERDE))
+    return 0
+
+
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
@@ -537,6 +646,21 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p = subcomandos.add_parser("revogar-sessoes", help="derruba todo dispositivo logado no servidor web")
     p.set_defaults(funcao=cmd_revogar_sessoes)
+
+    p = subcomandos.add_parser("pluggy-sincronizar", help="busca transações novas via Meu Pluggy (Open Finance)")
+    p.add_argument("--investimentos", action="store_true", help="também sincroniza posições de investimento")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_pluggy_sincronizar)
+
+    p = subcomandos.add_parser("pluggy-status", help="mostra conexões Pluggy e pendências de revisão")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_pluggy_status)
+
+    p = subcomandos.add_parser("revisar", help="lista/resolve lançamentos com categoria incerta (sincronização Pluggy)")
+    p.add_argument("--id", help="resolve um lançamento específico (use com --categoria)")
+    p.add_argument("--categoria", help="categoria a atribuir (usado com --id)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_revisar)
 
     p = subcomandos.add_parser("servir", help="sobe o servidor web local (API + PWA) pra acesso remoto")
     p.add_argument("--host", default="0.0.0.0", help="endereço pra escutar (padrão: todas as interfaces)")
