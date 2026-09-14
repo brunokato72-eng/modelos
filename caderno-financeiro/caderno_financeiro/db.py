@@ -19,7 +19,11 @@ from . import config
 from .datas import dias_entre
 from .valores import para_centavos
 
-ESQUEMA = """
+# Só as tabelas — os índices vêm depois de rodar a migração aditiva (ver
+# `_migrar_esquema`), porque um banco antigo pode não ter ainda as colunas
+# novas (origem/origem_id/revisao_pendente) que alguns índices referenciam:
+# criar o índice antes da migração dá "no such column" num banco existente.
+ESQUEMA_TABELAS = """
 CREATE TABLE IF NOT EXISTS lancamentos (
     id                 TEXT PRIMARY KEY,
     data               TEXT NOT NULL,
@@ -33,18 +37,70 @@ CREATE TABLE IF NOT EXISTS lancamentos (
     conta              TEXT NOT NULL DEFAULT '',
     descricao          TEXT NOT NULL DEFAULT '',
     criado_em          TEXT NOT NULL,
-    grupo_parcelamento TEXT
+    grupo_parcelamento TEXT,
+    origem             TEXT NOT NULL DEFAULT 'manual',
+    origem_id          TEXT,
+    revisao_pendente   INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_lanc_data ON lancamentos(data);
-CREATE INDEX IF NOT EXISTS idx_lanc_tipo ON lancamentos(tipo);
-CREATE INDEX IF NOT EXISTS idx_lanc_categoria ON lancamentos(categoria);
-CREATE INDEX IF NOT EXISTS idx_lanc_grupo ON lancamentos(grupo_parcelamento);
 
 CREATE TABLE IF NOT EXISTS configuracao (
     chave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pluggy_conexoes (
+    item_id             TEXT PRIMARY KEY,
+    instituicao         TEXT NOT NULL DEFAULT '',
+    ultima_sincronizacao TEXT,
+    status              TEXT NOT NULL DEFAULT 'ativa',
+    criado_em           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investimentos_posicoes (
+    id           TEXT PRIMARY KEY,
+    data         TEXT NOT NULL,
+    item_id      TEXT NOT NULL,
+    conta        TEXT NOT NULL DEFAULT '',
+    tipo         TEXT NOT NULL DEFAULT '',
+    nome         TEXT NOT NULL DEFAULT '',
+    valor        REAL NOT NULL,
+    quantidade   REAL,
+    criado_em    TEXT NOT NULL
+);
 """
+
+ESQUEMA_INDICES = """
+CREATE INDEX IF NOT EXISTS idx_lanc_data ON lancamentos(data);
+CREATE INDEX IF NOT EXISTS idx_lanc_tipo ON lancamentos(tipo);
+CREATE INDEX IF NOT EXISTS idx_lanc_categoria ON lancamentos(categoria);
+CREATE INDEX IF NOT EXISTS idx_lanc_grupo ON lancamentos(grupo_parcelamento);
+CREATE INDEX IF NOT EXISTS idx_lanc_revisao ON lancamentos(revisao_pendente);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lanc_origem_id ON lancamentos(origem, origem_id)
+    WHERE origem_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_invest_data ON investimentos_posicoes(data);
+CREATE INDEX IF NOT EXISTS idx_invest_item ON investimentos_posicoes(item_id);
+"""
+
+# mantido pelo nome antigo pra quem importar `ESQUEMA` de fora (nenhum uso
+# interno depende mais dele — `conectar()` roda tabelas, migração e índices
+# nessa ordem, separadamente).
+ESQUEMA = ESQUEMA_TABELAS + ESQUEMA_INDICES
+
+# Migração aditiva pra bancos criados antes dessas colunas existirem — SQLite
+# não tem "ADD COLUMN IF NOT EXISTS", então checamos via PRAGMA antes de somar.
+_MIGRACOES_LANCAMENTOS = (
+    ("origem", "TEXT NOT NULL DEFAULT 'manual'"),
+    ("origem_id", "TEXT"),
+    ("revisao_pendente", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _migrar_esquema(conexao: sqlite3.Connection) -> None:
+    colunas_existentes = {l["name"] for l in conexao.execute("PRAGMA table_info(lancamentos)")}
+    for nome, definicao in _MIGRACOES_LANCAMENTOS:
+        if nome not in colunas_existentes:
+            conexao.execute(f"ALTER TABLE lancamentos ADD COLUMN {nome} {definicao}")
+
 
 COLUNAS = (
     "id",
@@ -60,6 +116,9 @@ COLUNAS = (
     "descricao",
     "criado_em",
     "grupo_parcelamento",
+    "origem",
+    "origem_id",
+    "revisao_pendente",
 )
 
 # ligação entre o dicionário em camelCase (usado no código/IA) e as colunas
@@ -77,6 +136,9 @@ _DE_DICT = {
     "descricao": "descricao",
     "criadoEm": "criado_em",
     "grupoParcelamento": "grupo_parcelamento",
+    "origem": "origem",
+    "origemId": "origem_id",
+    "revisaoPendente": "revisao_pendente",
 }
 _PARA_DICT = {v: k for k, v in _DE_DICT.items()}
 
@@ -99,7 +161,9 @@ def conectar(caminho: Optional[Path] = None, *, criar_esquema: bool = True) -> s
     conexao.execute("PRAGMA foreign_keys=ON")
     conexao.execute("PRAGMA busy_timeout=10000")
     if criar_esquema:
-        conexao.executescript(ESQUEMA)
+        conexao.executescript(ESQUEMA_TABELAS)
+        _migrar_esquema(conexao)
+        conexao.executescript(ESQUEMA_INDICES)
     return conexao
 
 
@@ -119,10 +183,18 @@ def agora() -> str:
     return datetime.now(ZoneInfo(config.FUSO_HORARIO)).isoformat(timespec="seconds")
 
 
+_PADROES_LANCAMENTO = {"origem": "manual", "revisaoPendente": 0}
+
+
 def inserir(conexao: sqlite3.Connection, lancamentos: Iterable[Dict[str, Any]]) -> int:
     linhas = []
     for lanc in lancamentos:
-        linhas.append(tuple(lanc.get(_PARA_DICT[coluna]) for coluna in COLUNAS))
+        linhas.append(
+            tuple(
+                lanc.get(_PARA_DICT[coluna], _PADROES_LANCAMENTO.get(_PARA_DICT[coluna]))
+                for coluna in COLUNAS
+            )
+        )
     conexao.executemany(
         f"INSERT INTO lancamentos ({', '.join(COLUNAS)}) "
         f"VALUES ({', '.join('?' * len(COLUNAS))})",
@@ -239,3 +311,113 @@ def definir_config(conexao: sqlite3.Connection, chave: str, valor: str) -> None:
 def ler_config(conexao: sqlite3.Connection, chave: str, padrao=None):
     linha = conexao.execute("SELECT valor FROM configuracao WHERE chave = ?", (chave,)).fetchone()
     return linha[0] if linha else padrao
+
+
+# --------------------------------------------------------------------------
+# fila de revisão (categorização incerta na sincronização automática)
+# --------------------------------------------------------------------------
+
+def listar_pendentes_revisao(conexao: sqlite3.Connection) -> List[Dict[str, Any]]:
+    linhas = conexao.execute(
+        f"SELECT {', '.join(COLUNAS)} FROM lancamentos "
+        "WHERE revisao_pendente = 1 ORDER BY data DESC"
+    )
+    return [linha_para_dict(l) for l in linhas]
+
+
+def resolver_revisao(conexao: sqlite3.Connection, id_lancamento: str, categoria: str) -> bool:
+    """Confirma a categoria de um lançamento pendente e tira ele da fila."""
+    cursor = conexao.execute(
+        "UPDATE lancamentos SET categoria = ?, revisao_pendente = 0 WHERE id = ?",
+        (categoria, id_lancamento),
+    )
+    return cursor.rowcount > 0
+
+
+def contar_pendentes_revisao(conexao: sqlite3.Connection) -> int:
+    return conexao.execute(
+        "SELECT COUNT(*) FROM lancamentos WHERE revisao_pendente = 1"
+    ).fetchone()[0]
+
+
+def origem_ja_importada(conexao: sqlite3.Connection, origem: str, origem_id: str) -> bool:
+    """Dedup real pra fontes externas (Pluggy): por id da transação, não por
+    valor+data — evita reimportar a cada sincronização diária."""
+    linha = conexao.execute(
+        "SELECT 1 FROM lancamentos WHERE origem = ? AND origem_id = ?", (origem, origem_id)
+    ).fetchone()
+    return linha is not None
+
+
+# --------------------------------------------------------------------------
+# conexões Pluggy (controle de sincronização)
+# --------------------------------------------------------------------------
+
+def registrar_conexao_pluggy(conexao: sqlite3.Connection, item_id: str, instituicao: str) -> None:
+    conexao.execute(
+        "INSERT INTO pluggy_conexoes (item_id, instituicao, status, criado_em) "
+        "VALUES (?, ?, 'ativa', ?) "
+        "ON CONFLICT(item_id) DO UPDATE SET instituicao = excluded.instituicao",
+        (item_id, instituicao, agora()),
+    )
+
+
+def atualizar_sincronizacao_pluggy(conexao: sqlite3.Connection, item_id: str) -> None:
+    conexao.execute(
+        "UPDATE pluggy_conexoes SET ultima_sincronizacao = ? WHERE item_id = ?",
+        (agora(), item_id),
+    )
+
+
+def listar_conexoes_pluggy(conexao: sqlite3.Connection) -> List[Dict[str, Any]]:
+    linhas = conexao.execute(
+        "SELECT item_id, instituicao, ultima_sincronizacao, status, criado_em "
+        "FROM pluggy_conexoes ORDER BY criado_em"
+    )
+    return [dict(l) for l in linhas]
+
+
+# --------------------------------------------------------------------------
+# investimentos (posições — modelo diferente de lançamento: é saldo, não gasto)
+# --------------------------------------------------------------------------
+
+def inserir_posicoes_investimento(
+    conexao: sqlite3.Connection, posicoes: Iterable[Dict[str, Any]]
+) -> int:
+    linhas = [
+        (
+            p["id"], p["data"], p["itemId"], p.get("conta", ""), p.get("tipo", ""),
+            p.get("nome", ""), p["valor"], p.get("quantidade"), p.get("criadoEm") or agora(),
+        )
+        for p in posicoes
+    ]
+    conexao.executemany(
+        "INSERT OR REPLACE INTO investimentos_posicoes "
+        "(id, data, item_id, conta, tipo, nome, valor, quantidade, criado_em) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        linhas,
+    )
+    return len(linhas)
+
+
+def listar_posicoes_investimento(
+    conexao: sqlite3.Connection, data: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Sem `data`, devolve a posição mais recente de cada ativo (último snapshot)."""
+    if data:
+        linhas = conexao.execute(
+            "SELECT * FROM investimentos_posicoes WHERE data = ? ORDER BY conta, nome", (data,)
+        )
+        return [dict(l) for l in linhas]
+
+    linhas = conexao.execute(
+        """
+        SELECT ip.* FROM investimentos_posicoes ip
+        INNER JOIN (
+            SELECT item_id, nome, MAX(data) AS data_max
+            FROM investimentos_posicoes GROUP BY item_id, nome
+        ) atual ON ip.item_id = atual.item_id AND ip.nome = atual.nome AND ip.data = atual.data_max
+        ORDER BY ip.conta, ip.nome
+        """
+    )
+    return [dict(l) for l in linhas]

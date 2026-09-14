@@ -64,6 +64,19 @@ MODELO_ANALISE = os.environ.get("CADERNO_MODELO_ANALISE", "sonnet")
 # no dia seguinte pro relógio do servidor, e o lançamento vai pro mês errado.
 FUSO_HORARIO = os.environ.get("CADERNO_TIMEZONE", "America/Sao_Paulo")
 
+# Integração com o Meu Pluggy (Open Finance) — sincronização automática de
+# extrato bancário e investimentos. Client ID/Secret vêm de variável de
+# ambiente, nunca de arquivo versionado (são credenciais de acesso à conta
+# bancária conectada do usuário).
+PLUGGY_CLIENT_ID = os.environ.get("PLUGGY_CLIENT_ID")
+PLUGGY_CLIENT_SECRET = os.environ.get("PLUGGY_CLIENT_SECRET")
+PLUGGY_API_URL = os.environ.get("PLUGGY_API_URL", "https://api.pluggy.ai")
+
+# Categorias que a sincronização automática pode atribuir sem confirmação —
+# quando a confiança da classificação fica abaixo do limiar, o lançamento
+# entra na fila de revisão em vez de ser gravado direto.
+PLUGGY_CONFIANCA_MINIMA = float(os.environ.get("CADERNO_CONFIANCA_MINIMA", "0.7"))
+
 
 def diretorio_dados() -> Path:
     """Diretório onde vivem banco, backups e estado. Sobrescrevível por env."""
