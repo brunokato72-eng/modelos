@@ -11,6 +11,7 @@
   --erro: #f87171;
   --receita: #34d399;
   --despesa: #f87171;
+  --alerta: #fbbf24;
 }
 
 * { box-sizing: border-box; }
@@ -157,11 +158,40 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
 .resumo-caixa .numero.despesa { color: var(--despesa); }
 .resumo-caixa .numero.receita { color: var(--receita); }
 
-.resumo-bloco-titulo { font-size: 0.85rem; color: var(--texto-fraco); margin: 1rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.resumo-bloco-titulo, .painel-bloco-titulo { font-size: 0.85rem; color: var(--texto-fraco); margin: 1rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .barra-grupo { margin-bottom: 0.6rem; }
 .barra-grupo .barra-topo { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.3rem; }
 .barra-fundo { background: var(--superficie-alta); border-radius: 6px; height: 8px; overflow: hidden; }
 .barra-preenchimento { background: var(--acento); height: 100%; border-radius: 6px; }
+.barra-preenchimento.atencao { background: var(--alerta); }
+.barra-preenchimento.estourado { background: var(--despesa); }
+
+.saude-cartao { display: flex; align-items: flex-start; gap: 1rem; }
+.saude-pontuacao { font-size: 2rem; font-weight: 700; line-height: 1; flex-shrink: 0; }
+.saude-pontuacao.boa { color: var(--receita); }
+.saude-pontuacao.atencao { color: var(--alerta); }
+.saude-pontuacao.critica { color: var(--despesa); }
+.saude-detalhe { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.saude-classificacao { font-weight: 600; text-transform: capitalize; }
+.saude-alertas { list-style: none; margin: 0.6rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.saude-alertas li { font-size: 0.85rem; color: var(--alerta); }
+
+.orcamento-item { background: var(--superficie); border: 1px solid var(--borda); border-radius: 12px; padding: 0.8rem 1rem; margin-bottom: 0.6rem; }
+.orcamento-topo { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.9rem; margin-bottom: 0.4rem; gap: 0.5rem; }
+.orcamento-topo .categoria { font-weight: 600; }
+.orcamento-topo .valores { color: var(--texto-fraco); white-space: nowrap; }
+.orcamento-remover { background: transparent; color: var(--texto-fraco); font-size: 0.8rem; padding: 0.2rem 0; margin-top: 0.3rem; }
+
+.form-orcamento { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.form-orcamento select { flex: 1 1 55%; min-width: 0; }
+.form-orcamento input { flex: 1 1 30%; min-width: 0; }
+.form-orcamento button { flex-shrink: 0; }
+
+.investimento-item { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; padding: 0.6rem 0; border-bottom: 1px solid var(--borda); }
+.investimento-item:last-child { border-bottom: none; }
+.investimento-item .nome { font-weight: 500; }
+.investimento-item .tipo { font-size: 0.8rem; color: var(--texto-fraco); }
+.investimento-total { display: flex; justify-content: space-between; font-weight: 700; padding-top: 0.6rem; }
 
 .chat-mensagens {
   flex: 1;

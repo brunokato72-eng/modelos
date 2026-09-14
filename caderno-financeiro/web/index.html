@@ -57,6 +57,27 @@
       <div id="resumo-conteudo"></div>
     </section>
 
+    <section id="tab-painel" class="aba" hidden>
+      <div class="seletor-mes cartao">
+        <button id="painel-mes-anterior" class="botao-icone">‹</button>
+        <span id="painel-mes-rotulo">—</span>
+        <button id="painel-mes-seguinte" class="botao-icone">›</button>
+      </div>
+
+      <div id="saude-cartao" class="cartao saude-cartao"></div>
+
+      <div class="painel-bloco-titulo">Orçamentos</div>
+      <div id="orcamentos-lista"></div>
+      <form id="form-orcamento" class="cartao form-orcamento">
+        <select id="orcamento-categoria"></select>
+        <input id="orcamento-limite" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="limite (R$)">
+        <button type="submit">Definir</button>
+      </form>
+
+      <div class="painel-bloco-titulo">Investimentos</div>
+      <div id="investimentos-lista"></div>
+    </section>
+
     <section id="tab-perguntar" class="aba" hidden>
       <div id="chat-mensagens" class="chat-mensagens"></div>
       <form id="form-chat" class="chat-form">
@@ -82,6 +103,9 @@
     </button>
     <button class="aba-botao" data-aba="resumo">
       <span class="aba-icone">▤</span><span>Resumo</span>
+    </button>
+    <button class="aba-botao" data-aba="painel">
+      <span class="aba-icone">📊</span><span>Painel</span>
     </button>
     <button class="aba-botao" data-aba="perguntar">
       <span class="aba-icone">💬</span><span>Perguntar</span>

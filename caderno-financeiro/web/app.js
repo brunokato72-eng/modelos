@@ -9,6 +9,8 @@ const estado = {
   abaAtiva: "registrar",
   mesResumo: mesAtual(),
   mesHistorico: mesAtual(),
+  mesPainel: mesAtual(),
+  categoriasDespesa: [],
   historicoChat: [], // [{pergunta, resposta}]
 };
 
@@ -184,6 +186,7 @@ function irParaAba(nome) {
     botao.classList.toggle("ativo", botao.dataset.aba === nome);
   });
   if (nome === "resumo") carregarResumo();
+  if (nome === "painel") carregarPainel();
   if (nome === "historico") carregarHistorico();
   if (nome === "perguntar" && estado.historicoChat.length === 0) {
     renderizarMensagemAssistente("Pergunte o que quiser sobre seus gastos — ex: \"quanto gastei em mercado esse mês?\"");
@@ -351,6 +354,162 @@ function adicionarBlocoBarras(container, titulo, grupos, total) {
       ])
     );
   });
+}
+
+// ---------------------------------------------------------------------------
+// painel (saúde financeira + orçamentos + investimentos)
+// ---------------------------------------------------------------------------
+
+document.getElementById("painel-mes-anterior").addEventListener("click", () => {
+  estado.mesPainel = somarMes(estado.mesPainel, -1);
+  carregarPainel();
+});
+document.getElementById("painel-mes-seguinte").addEventListener("click", () => {
+  estado.mesPainel = somarMes(estado.mesPainel, 1);
+  carregarPainel();
+});
+
+async function carregarPainel() {
+  document.getElementById("painel-mes-rotulo").textContent = rotuloMes(estado.mesPainel);
+
+  const saudeContainer = document.getElementById("saude-cartao");
+  const orcamentosContainer = document.getElementById("orcamentos-lista");
+  const investimentosContainer = document.getElementById("investimentos-lista");
+  saudeContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  orcamentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  investimentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+
+  try {
+    if (!estado.categoriasDespesa.length) {
+      const panorama = await api("/api/panorama");
+      estado.categoriasDespesa = panorama.categoriasDespesa;
+      preencherSelectCategorias();
+    }
+    const [saude, orcamentos, investimentos] = await Promise.all([
+      api(`/api/saude?mes=${estado.mesPainel}`),
+      api(`/api/orcamentos?mes=${estado.mesPainel}`),
+      api("/api/investimentos"),
+    ]);
+    renderizarSaude(saudeContainer, saude);
+    renderizarOrcamentos(orcamentosContainer, orcamentos);
+    renderizarInvestimentos(investimentosContainer, investimentos);
+  } catch (erro) {
+    if (erro.status !== 401) {
+      saudeContainer.innerHTML = "";
+      saudeContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
+      orcamentosContainer.innerHTML = "";
+      investimentosContainer.innerHTML = "";
+    }
+  }
+}
+
+function preencherSelectCategorias() {
+  const select = document.getElementById("orcamento-categoria");
+  select.innerHTML = "";
+  estado.categoriasDespesa.forEach((categoria) => {
+    select.appendChild(el("option", { value: categoria, texto: categoria }));
+  });
+}
+
+function renderizarSaude(container, s) {
+  container.innerHTML = "";
+  const classificacaoClasse = { "boa": "boa", "atenção": "atencao", "crítica": "critica" }[s.classificacao] || "";
+
+  const pontuacao = el("div", { class: `saude-pontuacao ${classificacaoClasse}`, texto: String(s.pontuacao) });
+
+  const linhas = [];
+  if (s.taxaPoupanca !== null && s.taxaPoupanca !== undefined) {
+    linhas.push(`taxa de poupança: ${s.taxaPoupanca}%`);
+  }
+  if (s.tendenciaDespesas) linhas.push(`despesas ${s.tendenciaDespesas}`);
+  if (s.comprometimentoFuturoPercentual !== null && s.comprometimentoFuturoPercentual !== undefined) {
+    linhas.push(`parcelas futuras: ${s.comprometimentoFuturoPercentual}% da receita média`);
+  }
+
+  const detalhe = el("div", { class: "saude-detalhe" }, [
+    el("span", { class: "saude-classificacao", texto: s.classificacao }),
+    ...linhas.map((linha) => el("span", { class: "texto-fraco", texto: linha })),
+  ]);
+
+  container.appendChild(pontuacao);
+  container.appendChild(detalhe);
+
+  if (s.alertas && s.alertas.length) {
+    const lista = el("ul", { class: "saude-alertas" });
+    s.alertas.forEach((alerta) => lista.appendChild(el("li", { texto: `⚠ ${alerta}` })));
+    detalhe.appendChild(lista);
+  }
+}
+
+function renderizarOrcamentos(container, itens) {
+  container.innerHTML = "";
+  if (!itens.length) {
+    container.appendChild(el("p", { class: "vazio", texto: "nenhum orçamento definido ainda." }));
+    return;
+  }
+  itens.forEach((item) => {
+    const corClasse = item.estourado ? "estourado" : (item.percentual >= 80 ? "atencao" : "");
+    const bloco = el("div", { class: "orcamento-item" }, [
+      el("div", { class: "orcamento-topo" }, [
+        el("span", { class: "categoria", texto: item.categoria }),
+        el("span", { class: "valores", texto: `${formatarMoeda(item.gasto)} / ${formatarMoeda(item.limite)}` }),
+      ]),
+      el("div", { class: "barra-fundo" }, [
+        el("div", { class: `barra-preenchimento ${corClasse}`, style: `width:${Math.min(100, item.percentual)}%` }),
+      ]),
+      el("button", {
+        class: "orcamento-remover", texto: "remover orçamento",
+        onclick: async () => {
+          try {
+            await api(`/api/orcamentos/${encodeURIComponent(item.categoria)}`, { method: "DELETE" });
+            carregarPainel();
+          } catch (erro) {
+            if (erro.status !== 401) alert(`não consegui remover: ${erro.message}`);
+          }
+        },
+      }),
+    ]);
+    container.appendChild(bloco);
+  });
+}
+
+document.getElementById("form-orcamento").addEventListener("submit", async (evento) => {
+  evento.preventDefault();
+  const categoria = document.getElementById("orcamento-categoria").value;
+  const campoLimite = document.getElementById("orcamento-limite");
+  const limite = Number(campoLimite.value);
+  if (!categoria || !limite || limite <= 0) return;
+
+  try {
+    await api("/api/orcamentos", { method: "POST", body: JSON.stringify({ categoria, limite }) });
+    campoLimite.value = "";
+    carregarPainel();
+  } catch (erro) {
+    if (erro.status !== 401) alert(`não consegui salvar: ${erro.message}`);
+  }
+});
+
+function renderizarInvestimentos(container, dados) {
+  container.innerHTML = "";
+  if (!dados.posicoes.length) {
+    container.appendChild(el("p", { class: "vazio", texto: "nenhuma posição sincronizada ainda." }));
+    return;
+  }
+  const cartao = el("div", { class: "cartao" });
+  dados.posicoes.forEach((posicao) => {
+    cartao.appendChild(el("div", { class: "investimento-item" }, [
+      el("div", {}, [
+        el("div", { class: "nome", texto: posicao.nome }),
+        el("div", { class: "tipo", texto: `${posicao.tipo} · ${posicao.conta}` }),
+      ]),
+      el("span", { texto: formatarMoeda(posicao.valor) }),
+    ]));
+  });
+  cartao.appendChild(el("div", { class: "investimento-total" }, [
+    el("span", { texto: "Total" }),
+    el("span", { texto: formatarMoeda(dados.total) }),
+  ]));
+  container.appendChild(cartao);
 }
 
 // ---------------------------------------------------------------------------
