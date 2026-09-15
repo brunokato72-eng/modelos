@@ -49,7 +49,9 @@ from .datas import hoje_iso, somar_meses
 # nunca é respondida em modo headless, e a sincronização sempre volta vazia).
 # Chamada lenta (várias idas e vindas: conexões, contas, transações
 # paginadas por conexão) — o timeout padrão de 180s de ia.py é curto demais.
-TIMEOUT_SINCRONIZACAO = 480
+# Um teste real levou 831s só na etapa de transações (3 contas x 90 dias,
+# várias páginas cada), por isso a folga generosa aqui.
+TIMEOUT_SINCRONIZACAO = 1500
 
 FERRAMENTA_CONEXOES = "mcp__claude_ai_UPX_Financial__finance_connections_list"
 FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
