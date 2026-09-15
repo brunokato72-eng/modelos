@@ -621,7 +621,7 @@ def cmd_saude(args) -> int:
 def cmd_upx_sincronizar(args) -> int:
     with db.banco(args.banco) as conexao:
         try:
-            resultado = upx_sync.sincronizar(conexao)
+            resultado = upx_sync.sincronizar(conexao, desde=args.desde, ate=args.ate)
         except ia.ErroIA as erro:
             print(pintar(f"erro: {erro}", VERMELHO))
             return 1
@@ -779,6 +779,8 @@ def construir_parser() -> argparse.ArgumentParser:
         help="busca transações novas via UPX Financial (conector autorizado na conta claude.ai)",
     )
     p.add_argument("--investimentos", action="store_true", help="também sincroniza posições de investimento")
+    p.add_argument("--desde", help="AAAA-MM-DD — sobrescreve a janela padrão de 3 meses (ex.: carga de histórico antigo)")
+    p.add_argument("--ate", help="AAAA-MM-DD — sobrescreve o limite padrão de hoje (ex.: incluir parcelas futuras)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_upx_sincronizar)
 

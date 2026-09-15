@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from . import config, db, ia
 from .datas import hoje_iso, somar_meses
@@ -185,17 +185,25 @@ JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pende
 # a mesma janela todo dia não gera lançamento repetido.
 
 
-def sincronizar(conexao) -> Dict[str, Any]:
-    """Roda a sincronização completa. Sempre busca uma janela fixa (não avança
-    um "desde a última sincronização", porque uma transação pendente numa
-    sincronização pode assentar (e só aparecer) dias depois — se a janela
-    tivesse avançado, ela ficaria pra trás e nunca mais seria vista). Quem
-    evita duplicar em cima disso é o `origem_ja_importada` por transação."""
-    hoje = hoje_iso()
-    desde = somar_meses(hoje, -JANELA_MESES)
+def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = None) -> Dict[str, Any]:
+    """Roda a sincronização completa. Por padrão busca uma janela fixa de
+    `JANELA_MESES` até hoje (não avança um "desde a última sincronização",
+    porque uma transação pendente numa sincronização pode assentar (e só
+    aparecer) dias depois — se a janela tivesse avançado, ela ficaria pra
+    trás e nunca mais seria vista). Quem evita duplicar em cima disso é o
+    `origem_ja_importada` por transação.
 
-    brutas = buscar_transacoes_novas(desde, hoje)
-    print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) entre {desde} e {hoje}", file=sys.stderr)
+    `desde`/`ate` (AAAA-MM-DD) permitem sobrescrever a janela padrão — útil
+    pra uma carga única de histórico mais antigo ou parcelas futuras já
+    conhecidas, sem alterar o comportamento da sincronização diária."""
+    hoje = hoje_iso()
+    if desde is None:
+        desde = somar_meses(hoje, -JANELA_MESES)
+    if ate is None:
+        ate = hoje
+
+    brutas = buscar_transacoes_novas(desde, ate)
+    print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) entre {desde} e {ate}", file=sys.stderr)
     pendentes = []
     duplicadas = 0
     for bruta in brutas:

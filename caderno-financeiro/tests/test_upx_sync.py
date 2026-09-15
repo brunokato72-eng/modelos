@@ -169,6 +169,17 @@ class TestSincronizar(unittest.TestCase):
             upx_sync.sincronizar(conexao)
             self.assertIsNone(db.ler_config(conexao, "upx_ultima_sincronizacao"))
 
+    def test_desde_e_ate_sobrescrevem_a_janela_padrao(self):
+        """Pra uma carga única de histórico antigo (ou incluindo parcelas
+        futuras), dá pra passar desde/ate explícitos em vez da janela padrão
+        de JANELA_MESES até hoje."""
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar", return_value=resposta_upx({"transacoes": []})) as chamar_mock:
+            upx_sync.sincronizar(conexao, desde="2020-01-01", ate="2027-12-31")
+        prompt_usado = chamar_mock.call_args[0][0]
+        self.assertIn("2020-01-01", prompt_usado)
+        self.assertIn("2027-12-31", prompt_usado)
+
 
 class TestSincronizarInvestimentos(unittest.TestCase):
     def setUp(self):
