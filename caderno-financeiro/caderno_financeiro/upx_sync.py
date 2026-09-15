@@ -41,9 +41,15 @@ from typing import Any, Dict, List
 from . import config, db, ia
 from .datas import hoje_iso, somar_meses
 
-FERRAMENTA_CONTAS = "mcp__UPX_Financial__finance_accounts_list"
-FERRAMENTA_TRANSACOES = "mcp__UPX_Financial__finance_transactions_list"
-FERRAMENTA_INVESTIMENTOS = "mcp__UPX_Financial__finance_investments_list"
+# O conector é adicionado em claude.ai como "UPX Financial", mas o Claude
+# Code expõe as ferramentas com o nome do servidor MCP tal como aparece em
+# `claude mcp list` (ali: "claude.ai UPX Financial"), sanitizado — daí o
+# prefixo `claude_ai_` aqui. Sem isso o nome não bate com --allowed-tools e a
+# ferramenta nunca é chamada de fato (o Claude fica pedindo permissão, que
+# nunca é respondida em modo headless, e a sincronização sempre volta vazia).
+FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
+FERRAMENTA_TRANSACOES = "mcp__claude_ai_UPX_Financial__finance_transactions_list"
+FERRAMENTA_INVESTIMENTOS = "mcp__claude_ai_UPX_Financial__finance_investments_list"
 
 SISTEMA_UPX = (
     "Você tem acesso a ferramentas do UPX Financial (extrato bancário via Open "
