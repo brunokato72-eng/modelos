@@ -28,6 +28,7 @@ saldo/posição, não gasto, não faz sentido misturar com os lançamentos.
 
 from __future__ import annotations
 
+import sys
 import uuid
 from typing import Any, Dict, List
 
@@ -144,6 +145,7 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
         ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
         mcp_da_conta=True,
     )
+    print(f"[upx] resposta bruta do Claude: {ia.texto_da_resposta(resposta)[:500]!r}", file=sys.stderr)
     dados = ia.json_da_resposta(resposta)
     transacoes = dados.get("transacoes") if isinstance(dados, dict) else None
     return transacoes if isinstance(transacoes, list) else []
@@ -156,6 +158,7 @@ def sincronizar(conexao) -> Dict[str, Any]:
     desde = ultima or "1970-01-01"
 
     brutas = buscar_transacoes_novas(desde)
+    print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) desde {desde}", file=sys.stderr)
     pendentes = []
     duplicadas = 0
     for bruta in brutas:
