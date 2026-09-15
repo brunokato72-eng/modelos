@@ -135,18 +135,22 @@ def _mapear_forma_pagamento(conta_categoria: str, descricao: str) -> str:
     return "Cartão de débito"
 
 
-def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
+def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
     """Pede ao Claude pra puxar (via ferramenta MCP) as transações de todas as
-    contas conectadas na UPX Financial, desde a data informada."""
+    contas conectadas na UPX Financial, no intervalo [desde, ate]."""
     prompt = (
         f"1) Chame a ferramenta de listar contas da UPX Financial pra saber o "
         f"nome da instituição, a categoria (checking/savings/credit_card/"
         f"investment/loan/other) e um nome curto de cada conta (account_id).\n"
         f"2) Chame a ferramenta de listar transações pra TODAS as "
-        f"contas/conexões ativas, com `from`/data inicial = {desde} (AAAA-MM-DD, "
-        f"inclusive). A resposta pagina (campo `has_more`/`next_cursor`) — "
-        f"chame de novo com o cursor até `has_more` ser falso, juntando TODAS "
-        f"as páginas antes de responder.\n"
+        f"contas/conexões ativas, com `from`/data inicial = {desde} e "
+        f"`to`/data final = {ate} (AAAA-MM-DD, ambos inclusive — é IMPORTANTE "
+        f"passar `to`, senão a ferramenta também devolve parcelas futuras de "
+        f"cartão de crédito ainda não vencidas, inflando muito a paginação "
+        f"sem necessidade, já que elas aparecerão por conta própria no mês "
+        f"em que vencerem). A resposta pagina (campo `has_more`/`next_cursor`) "
+        f"— chame de novo com o cursor até `has_more` ser falso, juntando "
+        f"TODAS as páginas antes de responder.\n"
         f"3) Cruze o `account_id` de cada transação com a lista de contas do "
         f"passo 1 pra saber a categoria da conta dela.\n"
         f"4) Filtre: descarte transações com `is_pending: true`, EXCETO quando "
@@ -187,10 +191,11 @@ def sincronizar(conexao) -> Dict[str, Any]:
     sincronização pode assentar (e só aparecer) dias depois — se a janela
     tivesse avançado, ela ficaria pra trás e nunca mais seria vista). Quem
     evita duplicar em cima disso é o `origem_ja_importada` por transação."""
-    desde = somar_meses(hoje_iso(), -JANELA_MESES)
+    hoje = hoje_iso()
+    desde = somar_meses(hoje, -JANELA_MESES)
 
-    brutas = buscar_transacoes_novas(desde)
-    print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) desde {desde}", file=sys.stderr)
+    brutas = buscar_transacoes_novas(desde, hoje)
+    print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) entre {desde} e {hoje}", file=sys.stderr)
     pendentes = []
     duplicadas = 0
     for bruta in brutas:
