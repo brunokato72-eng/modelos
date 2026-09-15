@@ -52,9 +52,16 @@ def chamar(
     schema: Optional[Dict[str, Any]] = None,
     ferramentas: Optional[Sequence[str]] = None,
     mcp_config: Optional[str] = None,
+    mcp_da_conta: bool = False,
     timeout: int = TIMEOUT_PADRAO,
 ) -> Dict[str, Any]:
-    """Executa uma chamada headless e devolve o JSON completo do CLI."""
+    """Executa uma chamada headless e devolve o JSON completo do CLI.
+
+    `mcp_da_conta=True` permite usar um conector MCP autorizado na conta da
+    assinatura (ex.: UPX Financial, adicionado em claude.ai > Conectores) —
+    isso exige NÃO passar `--strict-mcp-config`, porque essa flag ignora
+    justamente esses conectores. Só vale a pena ligar isso quando `ferramentas`
+    também é passado, senão a chamada abre mão da flag à toa."""
     comando = [
         binario_claude(),
         "-p",
@@ -65,8 +72,9 @@ def chamar(
         "--model",
         modelo,
         "--no-session-persistence",
-        "--strict-mcp-config",
     ]
+    if not mcp_da_conta:
+        comando.append("--strict-mcp-config")
     if schema is not None:
         comando += ["--json-schema", json.dumps(schema, ensure_ascii=False)]
     if mcp_config:

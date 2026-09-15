@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import auth, config, consulta, db, estatisticas, exportador, ia, importador, registro
 from . import pluggy_cliente as pc
 from . import pluggy_sync
+from . import upx_sync
 from .calculadora import OPERACOES, executar_calculo
 from .datas import mes_atual, validar_mes
 from .valores import formatar
@@ -617,6 +618,36 @@ def cmd_saude(args) -> int:
     return 0
 
 
+def cmd_upx_sincronizar(args) -> int:
+    with db.banco(args.banco) as conexao:
+        try:
+            resultado = upx_sync.sincronizar(conexao)
+        except ia.ErroIA as erro:
+            print(pintar(f"erro: {erro}", VERMELHO))
+            return 1
+        investimentos = None
+        if args.investimentos:
+            try:
+                investimentos = upx_sync.sincronizar_investimentos(conexao)
+            except ia.ErroIA as erro:
+                print(pintar(f"erro ao sincronizar investimentos: {erro}", VERMELHO))
+
+    if args.json:
+        if investimentos is not None:
+            resultado["investimentosSincronizados"] = investimentos
+        imprimir_json(resultado)
+        return 0
+
+    print(pintar("Sincronização UPX Financial", NEGRITO))
+    print(f"  lançamentos novos:    {pintar(str(resultado['transacoesNovas']), VERDE)}")
+    if resultado["paraRevisao"]:
+        print(f"  aguardando revisão:   {pintar(str(resultado['paraRevisao']), AMARELO)} "
+              f"(rode `caderno revisar`)")
+    if investimentos is not None:
+        print(f"  posições de investimento salvas: {investimentos}")
+    return 0
+
+
 def cmd_investimentos(args) -> int:
     with db.banco(args.banco) as conexao:
         posicoes = db.listar_posicoes_investimento(conexao)
@@ -740,6 +771,14 @@ def construir_parser() -> argparse.ArgumentParser:
     p = subcomandos.add_parser("pluggy-status", help="mostra conexões Pluggy e pendências de revisão")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_pluggy_status)
+
+    p = subcomandos.add_parser(
+        "upx-sincronizar",
+        help="busca transações novas via UPX Financial (conector autorizado na conta claude.ai)",
+    )
+    p.add_argument("--investimentos", action="store_true", help="também sincroniza posições de investimento")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_upx_sincronizar)
 
     p = subcomandos.add_parser("revisar", help="lista/resolve lançamentos com categoria incerta (sincronização Pluggy)")
     p.add_argument("--id", help="resolve um lançamento específico (use com --categoria)")

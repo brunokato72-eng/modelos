@@ -115,11 +115,17 @@ verde "pacote instalado no virtualenv ($VENV)"
 # Em distros com SELinux (Oracle Linux, RHEL...), um executável dentro da
 # pasta pessoal do usuário fica marcado como "user_home_t" — o systemd não
 # tem permissão de rodar nada com esse rótulo. Sem isso, o serviço sobe e
-# morre na hora com "203/EXEC", sem mensagem clara do motivo.
+# morre na hora com "203/EXEC", sem mensagem clara do motivo. Isso vale tanto
+# pro virtualenv quanto pra deploy/*.sh (os scripts chamados pelos timers de
+# auto-atualização e sincronização) — os dois ficam sob a pasta pessoal, e
+# `git pull` cria arquivo novo sem rótulo nenhum, então isso precisa rodar
+# de novo (idempotente) toda vez que este script roda, não só na primeira vez.
 if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ] && command -v semanage >/dev/null 2>&1; then
-  echo "SELinux enforcing detectado — liberando execução em $VENV/bin ..."
+  echo "SELinux enforcing detectado — liberando execução em $VENV/bin e deploy/ ..."
   sudo semanage fcontext -a -t bin_t "$VENV/bin(/.*)?" 2>/dev/null || true
   sudo restorecon -Rv "$VENV/bin" > /dev/null
+  sudo semanage fcontext -a -t bin_t "$RAIZ_PROJETO/deploy(/.*)?" 2>/dev/null || true
+  sudo restorecon -Rv "$RAIZ_PROJETO/deploy" > /dev/null
   verde "contexto SELinux ajustado"
 fi
 
@@ -247,6 +253,49 @@ sudo systemctl enable --now caderno-pluggy-sincronizar.timer
 verde "timer de sincronização Pluggy ativado (roda 1x por dia; sem efeito até você configurar as credenciais)."
 
 # ---------------------------------------------------------------------------
+# 9) sincronização diária via UPX Financial (Open Finance/Plaid) — opcional
+# ---------------------------------------------------------------------------
+# Sem credencial nenhuma pra configurar aqui: a autorização é feita 1x em
+# claude.ai (Configurações > Conectores > UPX Financial) e fica presa à conta
+# da assinatura. Sem essa autorização feita, o timer roda 1x por dia e o
+# comando falha silenciosamente no log (nada quebra) até você autorizar.
+
+UNIDADE_UPX="/etc/systemd/system/caderno-upx-sincronizar.service"
+TIMER_UPX="/etc/systemd/system/caderno-upx-sincronizar.timer"
+echo "criando sincronização diária via UPX Financial (timer systemd) ..."
+
+sudo tee "$UNIDADE_UPX" > /dev/null <<EOF
+[Unit]
+Description=Sincroniza extrato bancário e investimentos via UPX Financial
+
+[Service]
+Type=oneshot
+User=$USER
+WorkingDirectory=$RAIZ_PROJETO
+Environment=PATH=$NODE_BIN_DIR:$VENV/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CADERNO_HOME=$HOME/.caderno-financeiro
+ExecStart=$RAIZ_PROJETO/deploy/upx-sincronizar.sh
+EOF
+
+sudo tee "$TIMER_UPX" > /dev/null <<EOF
+[Unit]
+Description=Roda a sincronização UPX Financial 1x por dia
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+chmod +x "$RAIZ_PROJETO/deploy/upx-sincronizar.sh"
+sudo systemctl daemon-reload
+sudo systemctl enable --now caderno-upx-sincronizar.timer
+verde "timer de sincronização UPX Financial ativado (roda 1x por dia)."
+
+# ---------------------------------------------------------------------------
 # passos manuais que faltam (só na primeira instalação)
 # ---------------------------------------------------------------------------
 
@@ -310,5 +359,21 @@ echo "       chmod 600 ~/.caderno-financeiro/pluggy.env"
 echo "       sudo systemctl restart caderno-financeiro caderno-pluggy-sincronizar.service"
 echo "  A partir daí a sincronização roda sozinha 1x por dia. Pra rodar na hora:"
 echo "       $VENV/bin/caderno pluggy-sincronizar"
+echo "  E pra ver o que ficou pendente de revisão:"
+echo "       $VENV/bin/caderno revisar"
+
+echo
+amarelo "recomendado: sincronização automática via UPX Financial (mais barato pra pessoa física)"
+echo "  1) No claude.ai (com a conta da sua assinatura), vá em Configurações > Conectores"
+echo "     > Adicionar conector personalizado, com:"
+echo "       Nome: UPX Financial"
+echo "       URL do servidor MCP remoto: https://mcp.upx.com/mcp"
+echo "     Em 'Cliente OAuth', escolha 'Registrar automaticamente' (não a opção"
+echo "     'identidade publicada do Claude' — ela dá erro em alguns servidores)."
+echo "  2) Conecte seus bancos direto no site/app da UPX (upx.com) — não precisa"
+echo "     digitar nenhuma credencial aqui na VPS, a autorização já fica presa"
+echo "     à sua conta Claude."
+echo "  A partir daí a sincronização roda sozinha 1x por dia. Pra rodar na hora:"
+echo "       $VENV/bin/caderno upx-sincronizar --investimentos"
 echo "  E pra ver o que ficou pendente de revisão:"
 echo "       $VENV/bin/caderno revisar"
