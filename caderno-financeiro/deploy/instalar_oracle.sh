@@ -279,11 +279,11 @@ EOF
 
 sudo tee "$TIMER_UPX" > /dev/null <<EOF
 [Unit]
-Description=Roda a sincronização UPX Financial 1x por dia
+Description=Roda a sincronização UPX Financial 1x por dia às 5h
 
 [Timer]
-OnCalendar=daily
-RandomizedDelaySec=30min
+OnCalendar=*-*-* 05:00:00
+RandomizedDelaySec=5min
 Persistent=true
 
 [Install]
@@ -293,7 +293,7 @@ EOF
 chmod +x "$RAIZ_PROJETO/deploy/upx-sincronizar.sh"
 sudo systemctl daemon-reload
 sudo systemctl enable --now caderno-upx-sincronizar.timer
-verde "timer de sincronização UPX Financial ativado (roda 1x por dia)."
+verde "timer de sincronização UPX Financial ativado (roda 1x por dia às 5h)."
 
 # ---------------------------------------------------------------------------
 # passos manuais que faltam (só na primeira instalação)
