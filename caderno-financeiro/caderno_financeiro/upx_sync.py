@@ -24,6 +24,12 @@ Passo a passo (mesmo padrão da Pluggy):
 
 Investimentos são sincronizados à parte (`sincronizar_investimentos`) — é
 saldo/posição, não gasto, não faz sentido misturar com os lançamentos.
+
+Usa MODELO_ANALISE (não MODELO_EXTRACAO/haiku) pra chamar as ferramentas
+MCP: o passo tem várias etapas (listar contas, paginar transações, cruzar
+account_id com a conta certa) e o haiku vinha devolvendo `{"transacoes":[]}`
+sem de fato tentar — provavelmente não seguia o roteiro de múltiplas
+chamadas de ferramenta.
 """
 
 from __future__ import annotations
@@ -140,7 +146,7 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
     resposta = ia.chamar(
         prompt,
         sistema=SISTEMA_UPX,
-        modelo=config.MODELO_EXTRACAO,
+        modelo=config.MODELO_ANALISE,
         schema=_SCHEMA_TRANSACOES,
         ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
         mcp_da_conta=True,
@@ -245,7 +251,7 @@ def sincronizar_investimentos(conexao) -> int:
     resposta = ia.chamar(
         prompt,
         sistema=SISTEMA_UPX,
-        modelo=config.MODELO_EXTRACAO,
+        modelo=config.MODELO_ANALISE,
         schema=_SCHEMA_INVESTIMENTOS,
         ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
         mcp_da_conta=True,
