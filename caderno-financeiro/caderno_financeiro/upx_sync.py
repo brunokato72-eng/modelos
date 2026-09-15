@@ -47,6 +47,7 @@ from .datas import hoje_iso, somar_meses
 # prefixo `claude_ai_` aqui. Sem isso o nome não bate com --allowed-tools e a
 # ferramenta nunca é chamada de fato (o Claude fica pedindo permissão, que
 # nunca é respondida em modo headless, e a sincronização sempre volta vazia).
+FERRAMENTA_CONEXOES = "mcp__claude_ai_UPX_Financial__finance_connections_list"
 FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
 FERRAMENTA_TRANSACOES = "mcp__claude_ai_UPX_Financial__finance_transactions_list"
 FERRAMENTA_INVESTIMENTOS = "mcp__claude_ai_UPX_Financial__finance_investments_list"
@@ -154,7 +155,7 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
         sistema=SISTEMA_UPX,
         modelo=config.MODELO_ANALISE,
         schema=_SCHEMA_TRANSACOES,
-        ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
+        ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
         mcp_da_conta=True,
     )
     print(f"[upx] resposta bruta do Claude: {ia.texto_da_resposta(resposta)[:500]!r}", file=sys.stderr)
@@ -259,7 +260,7 @@ def sincronizar_investimentos(conexao) -> int:
         sistema=SISTEMA_UPX,
         modelo=config.MODELO_ANALISE,
         schema=_SCHEMA_INVESTIMENTOS,
-        ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
+        ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
         mcp_da_conta=True,
     )
     dados = ia.json_da_resposta(resposta)
