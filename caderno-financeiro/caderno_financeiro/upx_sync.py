@@ -34,6 +34,7 @@ from typing import Any, Dict, List
 from . import config, db, ia
 from .datas import hoje_iso
 
+FERRAMENTA_CONTAS = "mcp__UPX_Financial__finance_accounts_list"
 FERRAMENTA_TRANSACOES = "mcp__UPX_Financial__finance_transactions_list"
 FERRAMENTA_INVESTIMENTOS = "mcp__UPX_Financial__finance_investments_list"
 
@@ -118,22 +119,29 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
     """Pede ao Claude pra puxar (via ferramenta MCP) as transações de todas as
     contas conectadas na UPX Financial, desde a data informada."""
     prompt = (
-        f"Chame a ferramenta de listar transações da UPX Financial pra TODAS as "
-        f"contas/conexões ativas, buscando transações a partir de {desde} "
-        f"(AAAA-MM-DD, inclusive). Pra cada transação, devolva: o id da "
-        f"transação, o nome da instituição, a categoria da conta "
-        f"(checking/savings/credit_card/investment/loan/other), um nome curto "
-        f"pra conta (ex.: apelido do cartão ou 'Conta Corrente'), a data "
-        f"(AAAA-MM-DD), o tipo (Despesa ou Receita, com base no sinal/natureza "
-        f"do valor retornado pela ferramenta), o valor (sempre positivo) e a "
-        f"descrição/nome do estabelecimento."
+        f"1) Chame a ferramenta de listar contas da UPX Financial pra saber o "
+        f"nome da instituição, a categoria (checking/savings/credit_card/"
+        f"investment/loan/other) e um nome curto de cada conta (account_id).\n"
+        f"2) Chame a ferramenta de listar transações pra TODAS as "
+        f"contas/conexões ativas, com `from`/data inicial = {desde} (AAAA-MM-DD, "
+        f"inclusive). A resposta pagina (campo `has_more`/`next_cursor`) — "
+        f"chame de novo com o cursor até `has_more` ser falso, juntando TODAS "
+        f"as páginas antes de responder.\n"
+        f"3) IGNORE transações com `is_pending: true` — só as já assentadas.\n"
+        f"4) Pra cada transação, cruze o `account_id` dela com a lista de "
+        f"contas do passo 1 e devolva: `transactionId` (campo `transaction_id`), "
+        f"`instituicao` (nome da instituição da conta), `contaCategoria` "
+        f"(categoria da conta), `contaNome` (nome curto da conta), `data` "
+        f"(campo `posted_date`, AAAA-MM-DD), `tipo` (Despesa se `direction` for "
+        f"outflow, Receita se for inflow), `valor` (campo `amount.amount`, "
+        f"sempre positivo) e `descricao` (campo `description`)."
     )
     resposta = ia.chamar(
         prompt,
         sistema=SISTEMA_UPX,
         modelo=config.MODELO_EXTRACAO,
         schema=_SCHEMA_TRANSACOES,
-        ferramentas=[FERRAMENTA_TRANSACOES],
+        ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
         mcp_da_conta=True,
     )
     dados = ia.json_da_resposta(resposta)
@@ -149,6 +157,7 @@ def sincronizar(conexao) -> Dict[str, Any]:
 
     brutas = buscar_transacoes_novas(desde)
     pendentes = []
+    duplicadas = 0
     for bruta in brutas:
         try:
             id_origem = str(bruta["transactionId"])
@@ -156,18 +165,25 @@ def sincronizar(conexao) -> Dict[str, Any]:
             continue
         if db.origem_ja_importada(conexao, "upx", id_origem):
             continue
+        data = str(bruta.get("data") or hoje_iso())[:10]
+        valor = round(abs(float(bruta.get("valor") or 0)), 2)
+        if db.existe_duplicata(conexao, data, valor):
+            # já existe um lançamento (provavelmente digitado manualmente antes
+            # de conectar o banco) com o mesmo valor e data — não duplica.
+            duplicadas += 1
+            continue
         descricao = str(bruta.get("descricao") or "").strip() or "(sem descrição)"
         pendentes.append({
             "origemId": id_origem,
-            "data": str(bruta.get("data") or hoje_iso())[:10],
+            "data": data,
             "tipo": bruta.get("tipo") if bruta.get("tipo") in config.TIPOS else config.TIPO_DESPESA,
-            "valor": round(abs(float(bruta.get("valor") or 0)), 2),
+            "valor": valor,
             "descricao": descricao,
             "formaPagamento": _mapear_forma_pagamento(str(bruta.get("contaCategoria") or ""), descricao),
             "conta": str(bruta.get("contaNome") or bruta.get("instituicao") or "UPX"),
         })
 
-    resultado: Dict[str, Any] = {"transacoesNovas": 0, "paraRevisao": 0}
+    resultado: Dict[str, Any] = {"transacoesNovas": 0, "paraRevisao": 0, "duplicadas": duplicadas}
     if pendentes:
         classificacoes = ia.categorizar_transacoes(
             [{"descricao": t["descricao"], "valor": t["valor"], "tipo": t["tipo"]} for t in pendentes]
@@ -208,17 +224,21 @@ def sincronizar_investimentos(conexao) -> int:
     quantas posições foram gravadas."""
     prompt = (
         "Chame a ferramenta de listar investimentos da UPX Financial pra TODAS "
-        "as contas/conexões de investimento ativas. Pra cada posição, devolva: "
-        "um id da posição/holding, o nome da instituição, o nome do ativo, o "
-        "tipo (ação, fundo, renda fixa, etc.), o valor atual e a quantidade "
-        "(null se não se aplicar, ex.: renda fixa)."
+        "as contas/conexões de investimento ativas. Se a resposta paginar "
+        "(`has_more`/`next_cursor`), busque todas as páginas antes de "
+        "responder. Se precisar do nome da instituição de cada posição e ele "
+        "não vier direto na ferramenta de investimentos, cruze com a "
+        "ferramenta de listar contas pelo id da conta/conexão. Pra cada "
+        "posição, devolva: um id da posição/holding, o nome da instituição, o "
+        "nome do ativo, o tipo (ação, fundo, renda fixa, etc.), o valor atual "
+        "e a quantidade (null se não se aplicar, ex.: renda fixa)."
     )
     resposta = ia.chamar(
         prompt,
         sistema=SISTEMA_UPX,
         modelo=config.MODELO_EXTRACAO,
         schema=_SCHEMA_INVESTIMENTOS,
-        ferramentas=[FERRAMENTA_INVESTIMENTOS],
+        ferramentas=[FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
         mcp_da_conta=True,
     )
     dados = ia.json_da_resposta(resposta)

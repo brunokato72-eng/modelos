@@ -109,6 +109,33 @@ class TestSincronizar(unittest.TestCase):
         self.assertEqual(total, 1)
         ia_mock.assert_not_called()
 
+    def test_transacao_que_bate_com_lancamento_manual_nao_e_duplicada(self):
+        """Se o usuário já tinha digitado esse gasto na mão (mesmo valor/data,
+        ±1 dia), a sincronização não deve importar de novo como uma segunda
+        transação — só contar como duplicata."""
+        with db.banco(self.banco) as conexao:
+            db.inserir(conexao, [{
+                "id": "manual-1", "data": "2026-09-10", "tipo": "Despesa", "categoria": "Mercado",
+                "valor": 89.9, "valorTotal": 89.9, "parcelaAtual": 1, "totalParcelas": 1,
+                "formaPagamento": "Pix", "conta": "Nubank", "descricao": "compras",
+                "criadoEm": "2026-09-10T09:00:00", "grupoParcelamento": None,
+            }])
+        transacoes = [{
+            "transactionId": "tx-7", "instituicao": "Nubank", "contaCategoria": "checking",
+            "contaNome": "Conta Corrente", "data": "2026-09-10", "tipo": "Despesa",
+            "valor": 89.9, "descricao": "SUPERMERCADO XYZ",
+        }]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar", return_value=resposta_upx({"transacoes": transacoes})), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            total = db.contar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 0)
+        self.assertEqual(resultado["duplicadas"], 1)
+        self.assertEqual(total, 1)  # continua só o lançamento manual, não duplicou
+        ia_mock.assert_not_called()
+
     def test_transacao_sem_id_e_ignorada_sem_quebrar(self):
         transacoes = [
             {"instituicao": "Nubank", "contaCategoria": "checking", "contaNome": "Conta",

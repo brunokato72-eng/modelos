@@ -640,6 +640,8 @@ def cmd_upx_sincronizar(args) -> int:
 
     print(pintar("Sincronização UPX Financial", NEGRITO))
     print(f"  lançamentos novos:    {pintar(str(resultado['transacoesNovas']), VERDE)}")
+    if resultado.get("duplicadas"):
+        print(f"  já registradas antes: {resultado['duplicadas']} (mesmo valor/data de algo já digitado)")
     if resultado["paraRevisao"]:
         print(f"  aguardando revisão:   {pintar(str(resultado['paraRevisao']), AMARELO)} "
               f"(rode `caderno revisar`)")
