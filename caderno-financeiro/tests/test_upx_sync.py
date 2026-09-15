@@ -150,20 +150,24 @@ class TestSincronizar(unittest.TestCase):
 
         self.assertEqual(resultado["transacoesNovas"], 1)
 
-    def test_atualiza_data_da_ultima_sincronizacao(self):
-        with db.banco(self.banco) as conexao, \
-             mock.patch.object(ia, "chamar", return_value=resposta_upx({"transacoes": []})):
-            upx_sync.sincronizar(conexao)
-            self.assertIsNotNone(db.ler_config(conexao, "upx_ultima_sincronizacao"))
-
-    def test_usa_data_da_ultima_sincronizacao_no_prompt(self):
-        with db.banco(self.banco) as conexao:
-            db.definir_config(conexao, "upx_ultima_sincronizacao", "2026-08-01")
-        with db.banco(self.banco) as conexao, \
+    def test_sempre_usa_janela_fixa_de_meses_no_prompt(self):
+        """Não existe mais um "desde a última sincronização" que avança — isso
+        faria uma transação pendente numa sincronização (e que só assenta dias
+        depois) nunca mais ser vista. A busca sempre olha os últimos
+        `JANELA_MESES` meses; quem evita duplicar é o dedup por origem_id."""
+        with mock.patch.object(upx_sync, "hoje_iso", return_value="2026-09-15"), \
+             db.banco(self.banco) as conexao, \
              mock.patch.object(ia, "chamar", return_value=resposta_upx({"transacoes": []})) as chamar_mock:
             upx_sync.sincronizar(conexao)
         prompt_usado = chamar_mock.call_args[0][0]
-        self.assertIn("2026-08-01", prompt_usado)
+        desde_esperado = upx_sync.somar_meses("2026-09-15", -upx_sync.JANELA_MESES)
+        self.assertIn(desde_esperado, prompt_usado)
+
+    def test_nao_grava_mais_data_de_ultima_sincronizacao(self):
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar", return_value=resposta_upx({"transacoes": []})):
+            upx_sync.sincronizar(conexao)
+            self.assertIsNone(db.ler_config(conexao, "upx_ultima_sincronizacao"))
 
 
 class TestSincronizarInvestimentos(unittest.TestCase):

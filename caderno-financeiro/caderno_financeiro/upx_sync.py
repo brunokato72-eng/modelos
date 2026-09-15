@@ -33,7 +33,7 @@ import uuid
 from typing import Any, Dict, List
 
 from . import config, db, ia
-from .datas import hoje_iso
+from .datas import hoje_iso, somar_meses
 
 FERRAMENTA_CONTAS = "mcp__UPX_Financial__finance_accounts_list"
 FERRAMENTA_TRANSACOES = "mcp__UPX_Financial__finance_transactions_list"
@@ -151,11 +151,18 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
     return transacoes if isinstance(transacoes, list) else []
 
 
+JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pendente
+# que só assentou depois; a deduplicação por origem_id garante que reimportar
+# a mesma janela todo dia não gera lançamento repetido.
+
+
 def sincronizar(conexao) -> Dict[str, Any]:
-    """Roda a sincronização completa. Nunca levanta exceção por transação
-    individual malformada — só ignora e segue com o resto."""
-    ultima = db.ler_config(conexao, "upx_ultima_sincronizacao")
-    desde = ultima or "1970-01-01"
+    """Roda a sincronização completa. Sempre busca uma janela fixa (não avança
+    um "desde a última sincronização", porque uma transação pendente numa
+    sincronização pode assentar (e só aparecer) dias depois — se a janela
+    tivesse avançado, ela ficaria pra trás e nunca mais seria vista). Quem
+    evita duplicar em cima disso é o `origem_ja_importada` por transação."""
+    desde = somar_meses(hoje_iso(), -JANELA_MESES)
 
     brutas = buscar_transacoes_novas(desde)
     print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) desde {desde}", file=sys.stderr)
@@ -218,7 +225,6 @@ def sincronizar(conexao) -> Dict[str, Any]:
         resultado["transacoesNovas"] = len(linhas)
         resultado["paraRevisao"] = sum(1 for l in linhas if l["revisaoPendente"])
 
-    db.definir_config(conexao, "upx_ultima_sincronizacao", hoje_iso())
     return resultado
 
 
