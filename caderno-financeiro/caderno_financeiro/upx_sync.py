@@ -47,6 +47,10 @@ from .datas import hoje_iso, somar_meses
 # prefixo `claude_ai_` aqui. Sem isso o nome não bate com --allowed-tools e a
 # ferramenta nunca é chamada de fato (o Claude fica pedindo permissão, que
 # nunca é respondida em modo headless, e a sincronização sempre volta vazia).
+# Chamada lenta (várias idas e vindas: conexões, contas, transações
+# paginadas por conexão) — o timeout padrão de 180s de ia.py é curto demais.
+TIMEOUT_SINCRONIZACAO = 480
+
 FERRAMENTA_CONEXOES = "mcp__claude_ai_UPX_Financial__finance_connections_list"
 FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
 FERRAMENTA_TRANSACOES = "mcp__claude_ai_UPX_Financial__finance_transactions_list"
@@ -157,6 +161,7 @@ def buscar_transacoes_novas(desde: str) -> List[Dict[str, Any]]:
         schema=_SCHEMA_TRANSACOES,
         ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
         mcp_da_conta=True,
+        timeout=TIMEOUT_SINCRONIZACAO,
     )
     print(f"[upx] resposta bruta do Claude: {ia.texto_da_resposta(resposta)[:500]!r}", file=sys.stderr)
     dados = ia.json_da_resposta(resposta)
@@ -262,6 +267,7 @@ def sincronizar_investimentos(conexao) -> int:
         schema=_SCHEMA_INVESTIMENTOS,
         ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
         mcp_da_conta=True,
+        timeout=TIMEOUT_SINCRONIZACAO,
     )
     dados = ia.json_da_resposta(resposta)
     brutas = dados.get("posicoes") if isinstance(dados, dict) else None
