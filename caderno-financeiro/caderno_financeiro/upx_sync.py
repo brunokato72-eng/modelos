@@ -50,8 +50,11 @@ from .datas import hoje_iso, somar_meses
 # Chamada lenta (várias idas e vindas: conexões, contas, transações
 # paginadas por conexão) — o timeout padrão de 180s de ia.py é curto demais.
 # Um teste real levou 831s só na etapa de transações (3 contas x 90 dias,
-# várias páginas cada), por isso a folga generosa aqui.
-TIMEOUT_SINCRONIZACAO = 1500
+# várias páginas cada, antes do corte por `to`); usado também em cargas
+# de histórico manuais (--desde/--ate) com janelas maiores que 90 dias,
+# por isso a folga bem generosa aqui — não custa nada além do tempo de
+# espera se a chamada terminar bem antes.
+TIMEOUT_SINCRONIZACAO = 2400
 
 FERRAMENTA_CONEXOES = "mcp__claude_ai_UPX_Financial__finance_connections_list"
 FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
