@@ -33,6 +33,7 @@ CATEGORIAS_DESPESA = (
 CATEGORIAS_RECEITA = (
     "Salário",
     "Reembolso",
+    "Investimento",
     "Outras entradas",
 )
 
