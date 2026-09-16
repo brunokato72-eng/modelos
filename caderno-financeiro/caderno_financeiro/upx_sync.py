@@ -229,6 +229,13 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
         # é gasto de verdade e continua contando.
         if descricao_bruta == "Valor adicionado na conta por cartão de crédito | Valor adicionado para PIX no Crédito":
             continue
+        # Resgate de aplicação (ex.: CDB) não é receita nova — é o próprio
+        # patrimônio investido voltando pra conta corrente. Contar como
+        # receita infla artificialmente quanto "entrou" no período; quem já
+        # rastreia esse dinheiro é `investimentos_posicoes` (o snapshot cai
+        # quando a posição é resgatada).
+        if "resgate" in descricao_bruta.lower():
+            continue
 
         valor_bruto = bruta.get("amount")
         valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto

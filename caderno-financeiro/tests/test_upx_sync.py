@@ -169,6 +169,25 @@ class TestSincronizar(unittest.TestCase):
 
         self.assertEqual(resultado["transacoesNovas"], 1)
 
+    def test_resgate_de_investimento_e_descartado(self):
+        """Resgate de CDB/aplicação não é receita nova — é o próprio
+        patrimônio investido voltando pra conta corrente."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-resgate-1", valor=1166.72, direction="inflow",
+                descricao="Resgate de CDB",
+            ),
+            transacao_bruta(transaction_id="tx-normal-4", valor=15.0, descricao="Padaria"),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Alimentação", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+        self.assertEqual(lancamentos[0]["descricao"], "Padaria")
+
     def test_pagamento_de_fatura_e_descartado(self):
         """'Pagamento de fatura' (saída da conta corrente pra quitar o
         cartão) duplicaria o gasto já contado nas compras individuais que
