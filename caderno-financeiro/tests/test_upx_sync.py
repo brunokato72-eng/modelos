@@ -215,6 +215,96 @@ class TestSincronizar(unittest.TestCase):
 
         self.assertEqual(resultado["transacoesNovas"], 1)
 
+    def test_pix_no_credito_descarta_so_o_valor_adicionado(self):
+        """'Valor adicionado na conta por cartão de crédito' é crédito
+        emprestado do limite pra bancar um PIX, não receita real — mas o PIX
+        em si ('Transferência enviada') é gasto de verdade e continua."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-credito-1", valor=200.0, direction="inflow",
+                descricao="Valor adicionado na conta por cartão de crédito | Valor adicionado para PIX no Crédito",
+            ),
+            transacao_bruta(
+                transaction_id="tx-pix-1", valor=200.0, direction="outflow",
+                descricao="Transferência enviada|Fulano de Tal",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Pessoal", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+        self.assertEqual(lancamentos[0]["descricao"], "Transferência enviada|Fulano de Tal")
+        self.assertEqual(lancamentos[0]["tipo"], config.TIPO_DESPESA)
+
+    def test_transferencia_entre_contas_proprias_e_descartada_dos_dois_lados(self):
+        """Mesmo valor/data, uma saída e uma entrada, e um dos lados cita o
+        próprio titular — é ele movendo dinheiro entre contas dele mesmo,
+        não gasto nem receita real."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-saida-1", valor=4000.0, direction="outflow",
+                descricao="Bruno Nonato Kato",
+            ),
+            transacao_bruta(
+                transaction_id="tx-entrada-1", valor=4000.0, direction="inflow",
+                descricao="Transferência Recebida|BRUNO NONATO KATO",
+            ),
+            transacao_bruta(transaction_id="tx-normal-2", valor=15.0, descricao="Padaria"),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Alimentação", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+        self.assertEqual(lancamentos[0]["descricao"], "Padaria")
+
+    def test_estorno_pareado_e_descartado_dos_dois_lados(self):
+        """Compra estornada: o gasto original e o estorno se cancelam — não
+        deve sobrar nem a despesa nem a receita."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-compra-1", data="2026-03-25", valor=36.0,
+                direction="outflow", descricao="Pizzaria Europa",
+            ),
+            transacao_bruta(
+                transaction_id="tx-estorno-1", data="2026-03-25", valor=36.0,
+                direction="inflow", descricao="Estorno - Compra no débito",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 0)
+
+    def test_mesmo_valor_e_data_sem_sinal_de_movimento_interno_e_mantido(self):
+        """Coincidência de valor/data entre uma despesa e uma receita, sem
+        nenhum sinal de transferência própria ou estorno, não deve ser
+        descartada — só o padrão sinalizado é removido."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-desp-1", valor=50.0, direction="outflow", descricao="Mercado",
+            ),
+            transacao_bruta(
+                transaction_id="tx-rec-3", valor=50.0, direction="inflow", descricao="Salário adiantado",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[
+                 {"categoria": "Mercado", "confianca": 0.9},
+                 {"categoria": "Salário", "confianca": 0.9},
+             ]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 2)
+
     def test_pagina_todas_as_paginas_ate_has_more_ser_falso(self):
         """Reproduz o cenário que antes travava o modelo (várias páginas) —
         agora é o Python que segue o cursor, uma chamada isolada por página."""

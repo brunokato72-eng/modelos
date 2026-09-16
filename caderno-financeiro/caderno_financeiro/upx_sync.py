@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from . import config, db, ia
@@ -77,6 +78,64 @@ def _listar_contas() -> Dict[str, Dict[str, str]]:
     return mapa
 
 
+# Nome do titular na UPX — usado só pra reconhecer transferência ENTRE
+# contas do próprio usuário (ex.: PIX de uma conta pra outra dele mesmo),
+# que não é gasto nem receita real. Aparece como contraparte só quando é ele
+# mesmo do outro lado (uma transferência de terceiro cita o nome do
+# terceiro, não o dele).
+NOME_TITULAR = "bruno nonato kato"
+
+
+def _e_sinal_de_movimento_interno(descricao: str) -> bool:
+    """Palavras/nomes que, quando aparecem numa transação pareada (mesma
+    data e valor, uma entrada e uma saída), indicam transferência entre
+    contas do próprio usuário ou estorno — não gasto nem receita real."""
+    d = descricao.lower()
+    return (
+        NOME_TITULAR in d
+        or "estorno" in d
+        or "conta investimento" in d
+        or "conta digital" in d
+    )
+
+
+def _remover_movimentos_internos(brutas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Descarta pares de transações (uma de entrada, uma de saída, mesma
+    data e mesmo valor) onde pelo menos um lado sinaliza transferência entre
+    contas do próprio usuário ou estorno — o gasto real é zero nesses casos,
+    e sem esse filtro cada ocorrência infla despesa E receita ao mesmo tempo
+    (o saldo líquido não muda, mas os totais brutos sim)."""
+    grupos: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+    for bruta in brutas:
+        valor_bruto = bruta.get("amount")
+        valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto
+        chave = (bruta.get("posted_date"), round(abs(float(valor or 0)), 2))
+        grupos[chave].append(bruta)
+
+    ids_para_remover = set()
+    for itens in grupos.values():
+        if len(itens) < 2:
+            continue
+        direcoes = {i.get("direction") for i in itens}
+        if "inflow" not in direcoes or "outflow" not in direcoes:
+            continue
+        tem_sinal = any(
+            _e_sinal_de_movimento_interno(str(i.get("description") or "")) for i in itens
+        )
+        if not tem_sinal:
+            continue
+        saida = next((i for i in itens if i.get("direction") == "outflow"), None)
+        entrada = next((i for i in itens if i.get("direction") == "inflow"), None)
+        if saida and saida.get("transaction_id"):
+            ids_para_remover.add(saida["transaction_id"])
+        if entrada and entrada.get("transaction_id"):
+            ids_para_remover.add(entrada["transaction_id"])
+
+    if not ids_para_remover:
+        return brutas
+    return [b for b in brutas if b.get("transaction_id") not in ids_para_remover]
+
+
 def _mapear_forma_pagamento(conta_categoria: str, descricao: str) -> str:
     if conta_categoria == "credit_card":
         return config.FORMA_PADRAO  # "Cartão de crédito"
@@ -118,6 +177,8 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
         if not cursor:
             break
 
+    brutas = _remover_movimentos_internos(brutas)
+
     resultado = []
     for bruta in brutas:
         transaction_id = bruta.get("transaction_id")
@@ -147,6 +208,13 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
         if descricao_bruta == "Pagamento de fatura":
             continue
         if descricao_bruta == "Pagamento recebido" and categoria_conta == "credit_card":
+            continue
+        # "Pix no crédito": o valor "entra" na conta vindo do limite do
+        # cartão pra bancar um PIX que sai na sequência (mesma data/valor,
+        # ver `_remover_movimentos_internos` para o par). Essa entrada não é
+        # receita real — é crédito emprestado —, mas o PIX que ela financia
+        # é gasto de verdade e continua contando.
+        if descricao_bruta == "Valor adicionado na conta por cartão de crédito | Valor adicionado para PIX no Crédito":
             continue
 
         valor_bruto = bruta.get("amount")
