@@ -27,8 +27,9 @@ def transacao_bruta(
     descricao="UBER TRIP",
     direction="outflow",
     pendente=False,
+    counterparty_name=None,
 ):
-    return {
+    bruta = {
         "transaction_id": transaction_id,
         "account_id": account_id,
         "posted_date": data,
@@ -37,6 +38,9 @@ def transacao_bruta(
         "direction": direction,
         "is_pending": pendente,
     }
+    if counterparty_name is not None:
+        bruta["counterparty_name"] = counterparty_name
+    return bruta
 
 
 def mock_ferramentas(contas=None, paginas_transacoes=None, investimentos=None):
@@ -282,6 +286,44 @@ class TestSincronizar(unittest.TestCase):
             resultado = upx_sync.sincronizar(conexao)
 
         self.assertEqual(resultado["transacoesNovas"], 0)
+
+    def test_counterparty_titular_e_descartada_mesmo_sem_par_visivel(self):
+        """O outro lado de uma transferência do titular pode estar numa
+        conta não conectada à UPX (ex.: onde o salário real cai antes de
+        ser repassado) — sem par visível na mesma leva, mas ainda assim não
+        é receita nova."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-repasse-1", valor=3636.0, direction="inflow",
+                descricao="Transferência Recebida", counterparty_name="Bruno Nonato Kato",
+            ),
+            transacao_bruta(transaction_id="tx-normal-3", valor=15.0, descricao="Padaria"),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Alimentação", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+        self.assertEqual(lancamentos[0]["descricao"], "Padaria")
+
+    def test_counterparty_terceiro_e_mantida(self):
+        """Contraparte diferente do titular é receita/gasto real de
+        verdade, mesmo com a mesma descrição genérica 'Transferência
+        Recebida'."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-terceiro-1", valor=174.11, direction="inflow",
+                descricao="Transferência Recebida", counterparty_name="BRADESCO SAUDE",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Reembolso", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
 
     def test_mesmo_valor_e_data_sem_sinal_de_movimento_interno_e_mantido(self):
         """Coincidência de valor/data entre uma despesa e uma receita, sem
