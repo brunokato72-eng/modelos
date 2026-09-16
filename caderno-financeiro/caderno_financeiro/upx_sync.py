@@ -99,34 +99,25 @@ def _e_sinal_de_movimento_interno(descricao: str) -> bool:
     )
 
 
-def _e_transferencia_do_titular(bruta: Dict[str, Any]) -> bool:
-    """Quando `counterparty_name` é o próprio titular, a transação é sempre
-    transferência entre contas dele — mesmo sem um lado espelhado visível
-    nesta leva. Isso acontece quando o outro lado está numa conta que não
-    está conectada à UPX (ex.: o salário de verdade cai numa conta de fora,
-    e o titular repassa pra uma conta conectada) — sem esse filtro direto, um
-    padrão bem regular de repasse pode até parecer "salário fixo todo mês"
-    olhando só valor e data, mas é o mesmo dinheiro se movendo, não receita
-    nova. Descoberto comparando 30 transações "Transferência Recebida" (sem
-    nome na descrição) contra o campo `counterparty_name`, ausente da
-    descrição mas presente no registro bruto: todas menos 5 (reembolsos de
-    plano de saúde, contraparte de terceiro de verdade) eram do titular."""
-    contraparte = str(bruta.get("counterparty_name") or "").strip().lower()
-    return contraparte == NOME_TITULAR
-
-
 def _remover_movimentos_internos(brutas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Descarta:
-    1) qualquer transação cujo `counterparty_name` seja o próprio titular
-       (ver `_e_transferencia_do_titular`) — não precisa de par visível;
-    2) pares de transações (uma de entrada, uma de saída, mesma data e mesmo
-       valor) onde pelo menos um lado sinaliza transferência entre contas do
-       próprio usuário (pelo texto da descrição) ou estorno.
-    Em ambos os casos o gasto/receita real é zero — sem este filtro, cada
-    ocorrência infla despesa E receita ao mesmo tempo (o saldo líquido não
-    muda, mas os totais brutos sim)."""
-    brutas = [b for b in brutas if not _e_transferencia_do_titular(b)]
+    """Descarta pares de transações (uma de entrada, uma de saída, mesma
+    data e mesmo valor) onde pelo menos um lado sinaliza transferência entre
+    contas do próprio usuário (pelo texto da descrição) ou estorno — o
+    gasto/receita real é zero nesses casos, e sem este filtro cada ocorrência
+    infla despesa E receita ao mesmo tempo (o saldo líquido não muda, mas os
+    totais brutos sim).
 
+    Importante: NÃO existe um filtro "descarta sempre que counterparty_name
+    for o próprio titular" — cogitamos isso (uma tentativa anterior chegou a
+    remover 26 lançamentos com essa lógica), mas o titular confirmou que o
+    padrão bimensal de entradas de ~R$3.600 (dia 15) e ~R$2.000-2.800 (fim
+    do mês) É salário real: a conta-salário do empregador redireciona
+    automaticamente pra essa conta por portabilidade bancária, e a
+    portabilidade sempre aparece com `counterparty_name` = o próprio titular
+    mesmo sendo dinheiro novo entrando (não um repasse por escolha dele).
+    Só o pareamento por (data, valor) — que exige ver os dois lados na MESMA
+    leva — é evidência forte o suficiente de que é o mesmo dinheiro se
+    movendo; `counterparty_name` sozinho não é."""
     grupos: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
     for bruta in brutas:
         valor_bruto = bruta.get("amount")
