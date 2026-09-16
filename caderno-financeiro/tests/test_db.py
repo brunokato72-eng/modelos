@@ -75,6 +75,34 @@ class TestBanco(unittest.TestCase):
             db.definir_config(conexao, "toolcall_ok", "0")
             self.assertEqual(db.ler_config(conexao, "toolcall_ok"), "0")
 
+    def test_remover_e_ignorar_origem_nunca_mais_e_reimportado(self):
+        """Descartar uma transação de sincronização (ex.: pagamento de
+        fatura, que duplica o gasto já contado nas compras individuais) não
+        pode deixá-la voltar na próxima sincronização — só apagar a linha não
+        basta, porque o dedup é feito checando se a linha existe."""
+        with db.banco(self.caminho) as conexao:
+            db.inserir(conexao, [lancamento(origem="upx", origemId="tx-fatura-1")])
+            self.assertTrue(db.origem_ja_importada(conexao, "upx", "tx-fatura-1"))
+
+            alvo = db.listar(conexao)[0]
+            removidos = db.remover_e_ignorar_origem(conexao, alvo["id"], motivo="transferência interna")
+            self.assertEqual(removidos, 1)
+            self.assertEqual(db.contar(conexao), 0)
+
+            # mesmo sem a linha, o dedup continua vendo como "já visto"
+            self.assertTrue(db.origem_ja_importada(conexao, "upx", "tx-fatura-1"))
+
+    def test_remover_e_ignorar_origem_sem_origem_id_so_remove(self):
+        """Um lançamento manual não tem origem_id — não há sincronização que
+        possa trazê-lo de volta, então não faz sentido (nem dá) registrar
+        ignorado."""
+        with db.banco(self.caminho) as conexao:
+            db.inserir(conexao, [lancamento()])  # origem="manual" (padrão), sem origemId
+            alvo = db.listar(conexao)[0]
+            removidos = db.remover_e_ignorar_origem(conexao, alvo["id"])
+            self.assertEqual(removidos, 1)
+            self.assertEqual(db.contar(conexao), 0)
+
 
 class TestExportacao(unittest.TestCase):
     def test_export_gera_csv_relegivel_pelo_importador(self):

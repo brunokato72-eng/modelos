@@ -134,6 +134,21 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
         if bruta.get("is_pending") and categoria_conta != "credit_card":
             continue
 
+        descricao_bruta = str(bruta.get("description") or "").strip()
+        # "Pagamento de fatura" (saída da conta corrente) e "Pagamento
+        # recebido" na conta do próprio cartão de crédito (entrada que quita
+        # o saldo devedor) são as duas pernas da MESMA transferência interna
+        # entre contas do usuário — confirmado comparando valor e data:
+        # sempre batem exatos. As compras que geraram a fatura já foram
+        # importadas individualmente; contar isso de novo duplica a despesa
+        # e ainda infla a receita do lado do cartão. Sem esse filtro, cada
+        # fatura paga (todo mês) reaparece como pendência nova, porque o
+        # transaction_id muda a cada ocorrência.
+        if descricao_bruta == "Pagamento de fatura":
+            continue
+        if descricao_bruta == "Pagamento recebido" and categoria_conta == "credit_card":
+            continue
+
         valor_bruto = bruta.get("amount")
         valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto
         descricao = str(bruta.get("description") or "").strip() or "(sem descrição)"

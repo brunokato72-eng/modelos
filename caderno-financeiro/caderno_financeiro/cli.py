@@ -416,6 +416,8 @@ def cmd_remover(args) -> int:
             return 1
         if args.grupo and alvo.get("grupoParcelamento"):
             removidos = db.remover_grupo(conexao, alvo["grupoParcelamento"])
+        elif args.nao_reimportar:
+            removidos = db.remover_e_ignorar_origem(conexao, args.id, motivo=args.motivo or "")
         else:
             removidos = db.remover(conexao, args.id)
     print(pintar(f"{removidos} lançamento(s) removido(s).", VERDE))
@@ -753,6 +755,14 @@ def construir_parser() -> argparse.ArgumentParser:
     p = subcomandos.add_parser("remover", help="remove um lançamento pelo id")
     p.add_argument("id")
     p.add_argument("--grupo", action="store_true", help="remove todas as parcelas da compra")
+    p.add_argument(
+        "--nao-reimportar", action="store_true",
+        help="além de remover, marca a origem (Pluggy/UPX) como ignorada pra nunca mais "
+             "voltar numa sincronização futura — use pra transferências internas entre "
+             "contas do próprio usuário (ex.: pagamento de fatura de cartão de crédito, "
+             "que duplicaria o gasto já contado nas compras que geraram a fatura)",
+    )
+    p.add_argument("--motivo", help="anotação livre do porquê (usado com --nao-reimportar)")
     p.set_defaults(funcao=cmd_remover)
 
     p = subcomandos.add_parser("testar-toolcall", help="verifica se o function calling nativo funciona")

@@ -165,6 +165,56 @@ class TestSincronizar(unittest.TestCase):
 
         self.assertEqual(resultado["transacoesNovas"], 1)
 
+    def test_pagamento_de_fatura_e_descartado(self):
+        """'Pagamento de fatura' (saída da conta corrente pra quitar o
+        cartão) duplicaria o gasto já contado nas compras individuais que
+        geraram a fatura — não deve virar lançamento."""
+        transacoes = [pagina([
+            transacao_bruta(transaction_id="tx-fat-1", descricao="Pagamento de fatura", valor=3000.0),
+            transacao_bruta(transaction_id="tx-normal-1", descricao="Uber"),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Outros", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+        self.assertEqual(lancamentos[0]["descricao"], "Uber")
+
+    def test_pagamento_recebido_no_cartao_de_credito_e_descartado(self):
+        """'Pagamento recebido' na própria conta do cartão de crédito é a
+        entrada que quita o saldo devedor — a outra perna de 'Pagamento de
+        fatura'. Infla a receita se não for descartada."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-rec-1", account_id="acc-credit",
+                descricao="Pagamento recebido", valor=3000.0, direction="inflow",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Outros", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 0)
+
+    def test_pagamento_recebido_fora_do_cartao_de_credito_e_mantido(self):
+        """'Pagamento recebido' numa conta que não é cartão de crédito não é
+        a quitação de fatura — é uma receita legítima, mantém."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-rec-2", account_id="acc-checking",
+                descricao="Pagamento recebido", valor=500.0, direction="inflow",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Reembolso", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+
     def test_pagina_todas_as_paginas_ate_has_more_ser_falso(self):
         """Reproduz o cenário que antes travava o modelo (várias páginas) —
         agora é o Python que segue o cursor, uma chamada isolada por página."""

@@ -74,6 +74,21 @@ CREATE TABLE IF NOT EXISTS orcamentos (
     criado_em     TEXT NOT NULL,
     atualizado_em TEXT NOT NULL
 );
+
+-- Transações externas que não devem virar lançamento — ex.: pagamento de
+-- fatura de cartão de crédito visto pelos dois lados (saída na conta
+-- corrente, entrada no próprio cartão): é uma transferência entre contas do
+-- usuário, não gasto nem receita novos, já que as compras que geraram a
+-- fatura já foram importadas individualmente. Removê-las de `lancamentos`
+-- não basta (a sincronização diária traria de volta); guardar aqui faz
+-- `origem_ja_importada` continuar vendo como "já visto" pra sempre.
+CREATE TABLE IF NOT EXISTS origens_ignoradas (
+    origem    TEXT NOT NULL,
+    origem_id TEXT NOT NULL,
+    motivo    TEXT NOT NULL DEFAULT '',
+    criado_em TEXT NOT NULL,
+    PRIMARY KEY (origem, origem_id)
+);
 """
 
 ESQUEMA_INDICES = """
@@ -262,6 +277,30 @@ def remover(conexao: sqlite3.Connection, id_lancamento: str) -> int:
     return cursor.rowcount
 
 
+def remover_e_ignorar_origem(conexao: sqlite3.Connection, id_lancamento: str, motivo: str = "") -> int:
+    """Remove o lançamento e, se ele veio de uma sincronização externa
+    (Pluggy/UPX), marca a origem como ignorada pra nunca mais ser
+    reimportada — usado pra descartar transferências internas entre contas
+    do próprio usuário (ex.: pagamento de fatura de cartão de crédito, que
+    duplicaria o gasto já contado nas compras individuais que geraram a
+    fatura). Um lançamento manual (sem origem_id) só é removido, já que não
+    há uma sincronização que possa trazê-lo de volta."""
+    linha = conexao.execute(
+        "SELECT origem, origem_id FROM lancamentos WHERE id = ?", (id_lancamento,)
+    ).fetchone()
+    removidos = remover(conexao, id_lancamento)
+    if removidos and linha and linha["origem_id"]:
+        ignorar_origem(conexao, linha["origem"], linha["origem_id"], motivo)
+    return removidos
+
+
+def ignorar_origem(conexao: sqlite3.Connection, origem: str, origem_id: str, motivo: str = "") -> None:
+    conexao.execute(
+        "INSERT OR IGNORE INTO origens_ignoradas (origem, origem_id, motivo, criado_em) VALUES (?, ?, ?, ?)",
+        (origem, origem_id, motivo, agora()),
+    )
+
+
 def remover_grupo(conexao: sqlite3.Connection, grupo: str) -> int:
     cursor = conexao.execute("DELETE FROM lancamentos WHERE grupo_parcelamento = ?", (grupo,))
     return cursor.rowcount
@@ -348,10 +387,15 @@ def contar_pendentes_revisao(conexao: sqlite3.Connection) -> int:
 
 
 def origem_ja_importada(conexao: sqlite3.Connection, origem: str, origem_id: str) -> bool:
-    """Dedup real pra fontes externas (Pluggy): por id da transação, não por
-    valor+data — evita reimportar a cada sincronização diária."""
+    """Dedup real pra fontes externas (Pluggy/UPX): por id da transação, não
+    por valor+data — evita reimportar a cada sincronização diária. Também
+    conta como "já visto" uma origem marcada como ignorada (ver
+    `remover_e_ignorar_origem`), mesmo sem lançamento correspondente na
+    tabela — senão ela reapareceria na próxima sincronização."""
     linha = conexao.execute(
-        "SELECT 1 FROM lancamentos WHERE origem = ? AND origem_id = ?", (origem, origem_id)
+        "SELECT 1 FROM lancamentos WHERE origem = ? AND origem_id = ? "
+        "UNION SELECT 1 FROM origens_ignoradas WHERE origem = ? AND origem_id = ?",
+        (origem, origem_id, origem, origem_id),
     ).fetchone()
     return linha is not None
 

@@ -184,11 +184,19 @@ def chamar_ferramenta_unica(
             f"{processo.stdout[-1200:]}"
         )
     if isinstance(resultado, str):
-        # O Claude Code trunca tool_results grandes demais (persiste em
-        # arquivo à parte e devolve um aviso de texto em vez do JSON) — nesse
-        # caso não dá pra decodificar como dict. O chamador precisa saber
-        # disso pra reduzir o volume pedido (ex.: um page_size menor), não só
-        # receber uma string onde esperava um objeto.
+        # Não veio um JSON decodificável — dois motivos observados na
+        # prática, que merecem mensagens diferentes pra não confundir o
+        # diagnóstico: (1) o Claude Code trunca tool_results grandes demais
+        # (persiste em arquivo à parte e devolve um aviso de texto no lugar
+        # do JSON) ou (2) a ferramenta MCP não estava "carregada" nessa
+        # chamada (erro `No such tool available` — geralmente transitório,
+        # vale tentar de novo).
+        if "no such tool available" in resultado.lower():
+            raise ErroIA(
+                f"`{ferramenta}` não estava disponível nessa chamada (a "
+                f"ferramenta MCP não foi encontrada) — normalmente é "
+                f"transitório, tentar de novo resolve. Mensagem:\n{resultado[:500]}"
+            )
         raise ErroIA(
             f"`{ferramenta}` devolveu um resultado grande demais pra caber na "
             f"resposta (o Claude Code truncou); peça menos dados por chamada "
@@ -456,6 +464,16 @@ _SCHEMA_CATEGORIZAR = {
 
 _PADRAO_CATEGORIZACAO = {"categoria": "Outros", "confianca": 0.0}
 
+# Uma carga de histórico grande (ex.: `upx-sincronizar --desde` cobrindo
+# meses) pode gerar centenas de transações pendentes numa sincronização só.
+# Categorizar tudo numa única chamada arrisca estourar o timeout padrão (o
+# modelo demora mais pra escrever centenas de classificações) e, em volumes
+# maiores ainda, o teto de tokens de saída — o mesmo tipo de problema que a
+# paginação de `upx_sync.py` resolveu do lado da extração. Lotes menores
+# mantêm cada chamada rápida e previsível, sem mudar a assinatura pra quem
+# chama (upx_sync.py, pluggy_sync.py).
+_LOTE_CATEGORIZACAO = 40
+
 
 def categorizar_transacoes(transacoes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """`transacoes`: lista de {"descricao", "valor", "tipo"}. Devolve lista
@@ -463,6 +481,13 @@ def categorizar_transacoes(transacoes: Sequence[Dict[str, Any]]) -> List[Dict[st
     itens do que a entrada, mesmo se o modelo pular algum índice."""
     if not transacoes:
         return []
+
+    if len(transacoes) > _LOTE_CATEGORIZACAO:
+        resultado: List[Dict[str, Any]] = []
+        for inicio in range(0, len(transacoes), _LOTE_CATEGORIZACAO):
+            lote = transacoes[inicio : inicio + _LOTE_CATEGORIZACAO]
+            resultado.extend(categorizar_transacoes(lote))
+        return resultado
 
     linhas = "\n".join(
         f"{i}. [{t['tipo']}] \"{t['descricao']}\" — R$ {t['valor']:.2f}"

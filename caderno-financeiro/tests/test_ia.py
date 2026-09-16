@@ -51,5 +51,53 @@ class TestChamarConstroiComandoCerto(unittest.TestCase):
         self.assertIn("--strict-mcp-config", comando)
 
 
+def _resposta_categorizacao(classificacoes):
+    return _processo_falso(json.dumps({"classificacoes": classificacoes}))
+
+
+class TestCategorizarTransacoesEmLotes(unittest.TestCase):
+    """Uma carga de histórico grande pode gerar centenas de transações
+    pendentes numa sincronização só — categorizar tudo numa chamada arrisca
+    estourar timeout (ou, em volumes maiores, o teto de tokens de saída).
+    `categorizar_transacoes` precisa dividir em lotes sozinho, sem que quem
+    chama (upx_sync, pluggy_sync) precise saber disso."""
+
+    def setUp(self):
+        patch_bin = mock.patch.object(ia, "binario_claude", return_value="claude")
+        patch_bin.start()
+        self.addCleanup(patch_bin.stop)
+
+    def _transacao(self, i):
+        return {"descricao": f"loja {i}", "valor": 10.0 + i, "tipo": "Despesa"}
+
+    def test_lote_pequeno_faz_uma_unica_chamada(self):
+        transacoes = [self._transacao(i) for i in range(5)]
+        classificacoes = [{"indice": i, "categoria": "Outros", "confianca": 0.5} for i in range(5)]
+        with mock.patch("subprocess.run", return_value=_resposta_categorizacao(classificacoes)) as run_mock:
+            resultado = ia.categorizar_transacoes(transacoes)
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertEqual(len(resultado), 5)
+
+    def test_lote_grande_e_dividido_em_varias_chamadas(self):
+        total = ia._LOTE_CATEGORIZACAO + 15  # força duas chamadas
+        transacoes = [self._transacao(i) for i in range(total)]
+
+        def _side_effect(comando, input, **kwargs):
+            # cada chamada só vê seu próprio pedaço — os índices no prompt
+            # sempre começam do 0 dentro do lote.
+            n_neste_lote = input.count(". [")
+            classificacoes = [
+                {"indice": i, "categoria": "Outros", "confianca": 0.5} for i in range(n_neste_lote)
+            ]
+            return _resposta_categorizacao(classificacoes)
+
+        with mock.patch("subprocess.run", side_effect=_side_effect) as run_mock:
+            resultado = ia.categorizar_transacoes(transacoes)
+
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual(len(resultado), total)
+        self.assertTrue(all(c["categoria"] == "Outros" for c in resultado))
+
+
 if __name__ == "__main__":
     unittest.main()
