@@ -7,29 +7,26 @@ qualquer `claude -p` rodado por esse usuário já enxerga as contas conectadas
 — sem nenhuma credencial pra configurar na VPS.
 
 O acesso aos dados passa pelo Claude (as ferramentas são MCP, não uma API
-REST que dá pra chamar direto), mas o Claude aqui só tem UMA função: chamar a
-ferramenta pedida e devolver os dados exatos que ela retornou, no formato do
-schema. Ele nunca resume, nunca soma, nunca decide categoria — quem decide
-categoria e se algo precisa de revisão continua sendo código determinístico
-(`ia.categorizar_transacoes` + o limiar de confiança), exatamente como na
-sincronização da Pluggy.
+REST que dá pra chamar direto), mas cada chamada pede UMA ferramenta com
+argumentos exatos e o resultado bruto é lido direto do stream de eventos do
+Claude Code (`ia.chamar_ferramenta_unica`) — o Claude nunca resume, nunca
+cruza conta com transação, nunca decide categoria. Isso é código
+determinístico aqui embaixo (`_listar_contas`, o loop de paginação, o filtro
+de pendências) — a única exceção é `ia.categorizar_transacoes`, que já é assim
+também na sincronização da Pluggy.
 
-Passo a passo (mesmo padrão da Pluggy):
-  1. busca transações novas de todas as contas conectadas (1 chamada, o
-     Claude decide sozinho quantas vezes precisa chamar a ferramenta de
-     transação por trás)
-  2. filtra o que já foi importado antes (`db.origem_ja_importada`)
-  3. categoriza em lote
-  4. confiança alta -> grava direto; confiança baixa -> fila de revisão
+Isso substitui um design anterior em que um único prompt pedia ao Claude pra
+"buscar todas as páginas, cruzar com as contas e devolver tudo agregado no
+final": funcionava para poucas transações, mas numa janela de 90 dias já
+levava 831s (a IA reprocessando, via cache, o histórico de tool-results
+acumulado a cada nova página) e em janelas maiores estourava o teto de
+tokens de saída do modelo antes de terminar de escrever o JSON final —
+sincronização inteira falhava mesmo tendo os dados em mãos. Paginando pelo
+lado do Python, cada chamada é isolada (sem histórico acumulado) e nunca
+depende do modelo reescrever dados grandes como texto.
 
 Investimentos são sincronizados à parte (`sincronizar_investimentos`) — é
 saldo/posição, não gasto, não faz sentido misturar com os lançamentos.
-
-Usa MODELO_ANALISE (não MODELO_EXTRACAO/haiku) pra chamar as ferramentas
-MCP: o passo tem várias etapas (listar contas, paginar transações, cruzar
-account_id com a conta certa) e o haiku vinha devolvendo `{"transacoes":[]}`
-sem de fato tentar — provavelmente não seguia o roteiro de múltiplas
-chamadas de ferramenta.
 """
 
 from __future__ import annotations
@@ -45,86 +42,39 @@ from .datas import hoje_iso, somar_meses
 # Code expõe as ferramentas com o nome do servidor MCP tal como aparece em
 # `claude mcp list` (ali: "claude.ai UPX Financial"), sanitizado — daí o
 # prefixo `claude_ai_` aqui. Sem isso o nome não bate com --allowed-tools e a
-# ferramenta nunca é chamada de fato (o Claude fica pedindo permissão, que
-# nunca é respondida em modo headless, e a sincronização sempre volta vazia).
-# Chamada lenta (várias idas e vindas: conexões, contas, transações
-# paginadas por conexão) — o timeout padrão de 180s de ia.py é curto demais.
-# Um teste real levou 831s só na etapa de transações (3 contas x 90 dias,
-# várias páginas cada, antes do corte por `to`); usado também em cargas
-# de histórico manuais (--desde/--ate) com janelas maiores que 90 dias,
-# por isso a folga bem generosa aqui — não custa nada além do tempo de
-# espera se a chamada terminar bem antes.
-TIMEOUT_SINCRONIZACAO = 2400
-
-FERRAMENTA_CONEXOES = "mcp__claude_ai_UPX_Financial__finance_connections_list"
+# ferramenta nunca é chamada de fato.
 FERRAMENTA_CONTAS = "mcp__claude_ai_UPX_Financial__finance_accounts_list"
 FERRAMENTA_TRANSACOES = "mcp__claude_ai_UPX_Financial__finance_transactions_list"
 FERRAMENTA_INVESTIMENTOS = "mcp__claude_ai_UPX_Financial__finance_investments_list"
 
-SISTEMA_UPX = (
-    "Você tem acesso a ferramentas do UPX Financial (extrato bancário via Open "
-    "Finance/Plaid). Sua única tarefa é chamar a ferramenta pedida — quantas "
-    "vezes for preciso, uma por conta/conexão — e devolver os dados no formato "
-    "pedido. Nunca resuma, nunca calcule total, nunca arredonde, nunca invente "
-    "um campo que a ferramenta não devolveu (use null). O campo `valor` é "
-    "sempre positivo (o `tipo` já diz se é despesa ou receita)."
-)
+# Cada chamada agora busca no máximo UMA página (ou a lista de contas/
+# investimentos, que não pagina na prática) — bem mais rápido e previsível
+# que o design antigo, então a folga generosa de antes não é mais necessária.
+TIMEOUT_FERRAMENTA = 180
 
-_SCHEMA_TRANSACOES = {
-    "type": "object",
-    "properties": {
-        "transacoes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "transactionId": {"type": "string"},
-                    "instituicao": {"type": "string"},
-                    "contaCategoria": {
-                        "type": "string",
-                        "enum": ["checking", "savings", "credit_card", "investment", "loan", "other"],
-                    },
-                    "contaNome": {"type": "string"},
-                    "data": {"type": "string"},
-                    "tipo": {"type": "string", "enum": list(config.TIPOS)},
-                    "valor": {"type": "number"},
-                    "descricao": {"type": "string"},
-                },
-                "required": [
-                    "transactionId", "instituicao", "contaCategoria", "contaNome",
-                    "data", "tipo", "valor", "descricao",
-                ],
-                "additionalProperties": False,
-            },
-        }
-    },
-    "required": ["transacoes"],
-    "additionalProperties": False,
-}
+# Máximo permitido pela ferramenta é 500, mas o Claude Code trunca (persiste
+# em arquivo à parte, fora do alcance do subprocess isolado) qualquer
+# tool_result grande demais pra caber direto na resposta — testado na prática:
+# page_size=100 já estoura (~54KB), page_size=50 cabe com folga (~25KB).
+PAGE_SIZE = 50
 
-_SCHEMA_INVESTIMENTOS = {
-    "type": "object",
-    "properties": {
-        "posicoes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "holdingId": {"type": "string"},
-                    "instituicao": {"type": "string"},
-                    "nome": {"type": "string"},
-                    "tipo": {"type": "string"},
-                    "valor": {"type": "number"},
-                    "quantidade": {"type": ["number", "null"]},
-                },
-                "required": ["holdingId", "instituicao", "nome", "tipo", "valor", "quantidade"],
-                "additionalProperties": False,
-            },
+
+def _listar_contas() -> Dict[str, Dict[str, str]]:
+    """account_id -> {categoria, nome, instituicao}, pra cruzar com as
+    transações depois (código puro, sem IA nenhuma nesse cruzamento)."""
+    bruto = ia.chamar_ferramenta_unica(FERRAMENTA_CONTAS, {}, timeout=TIMEOUT_FERRAMENTA)
+    contas = bruto.get("accounts") if isinstance(bruto, dict) else None
+    mapa: Dict[str, Dict[str, str]] = {}
+    for conta in contas or []:
+        conta_id = conta.get("account_id")
+        if not conta_id:
+            continue
+        mapa[conta_id] = {
+            "categoria": conta.get("category") or "other",
+            "nome": conta.get("display_label") or conta.get("name") or "Conta",
+            "instituicao": conta.get("institution_name") or "UPX",
         }
-    },
-    "required": ["posicoes"],
-    "additionalProperties": False,
-}
+    return mapa
 
 
 def _mapear_forma_pagamento(conta_categoria: str, descricao: str) -> str:
@@ -139,48 +89,66 @@ def _mapear_forma_pagamento(conta_categoria: str, descricao: str) -> str:
 
 
 def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
-    """Pede ao Claude pra puxar (via ferramenta MCP) as transações de todas as
-    contas conectadas na UPX Financial, no intervalo [desde, ate]."""
-    prompt = (
-        f"1) Chame a ferramenta de listar contas da UPX Financial pra saber o "
-        f"nome da instituição, a categoria (checking/savings/credit_card/"
-        f"investment/loan/other) e um nome curto de cada conta (account_id).\n"
-        f"2) Chame a ferramenta de listar transações pra TODAS as "
-        f"contas/conexões ativas, com `from`/data inicial = {desde} e "
-        f"`to`/data final = {ate} (AAAA-MM-DD, ambos inclusive — é IMPORTANTE "
-        f"passar `to`, senão a ferramenta também devolve parcelas futuras de "
-        f"cartão de crédito ainda não vencidas, inflando muito a paginação "
-        f"sem necessidade, já que elas aparecerão por conta própria no mês "
-        f"em que vencerem). A resposta pagina (campo `has_more`/`next_cursor`) "
-        f"— chame de novo com o cursor até `has_more` ser falso, juntando "
-        f"TODAS as páginas antes de responder.\n"
-        f"3) Cruze o `account_id` de cada transação com a lista de contas do "
-        f"passo 1 pra saber a categoria da conta dela.\n"
-        f"4) Filtre: descarte transações com `is_pending: true`, EXCETO quando "
-        f"a conta for `credit_card` — nessas, mantenha mesmo pendente (fatura "
-        f"de cartão demora a fechar, mas o valor da compra já é definitivo). "
-        f"Ou seja: conta que não é cartão de crédito + pendente = descarta; "
-        f"qualquer outra combinação = mantém.\n"
-        f"5) Pra cada transação que sobrou, devolva: `transactionId` (campo `transaction_id`), "
-        f"`instituicao` (nome da instituição da conta), `contaCategoria` "
-        f"(categoria da conta), `contaNome` (nome curto da conta), `data` "
-        f"(campo `posted_date`, AAAA-MM-DD), `tipo` (Despesa se `direction` for "
-        f"outflow, Receita se for inflow), `valor` (campo `amount.amount`, "
-        f"sempre positivo) e `descricao` (campo `description`)."
-    )
-    resposta = ia.chamar(
-        prompt,
-        sistema=SISTEMA_UPX,
-        modelo=config.MODELO_ANALISE,
-        schema=_SCHEMA_TRANSACOES,
-        ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_TRANSACOES],
-        mcp_da_conta=True,
-        timeout=TIMEOUT_SINCRONIZACAO,
-    )
-    print(f"[upx] resposta bruta do Claude: {ia.texto_da_resposta(resposta)[:500]!r}", file=sys.stderr)
-    dados = ia.json_da_resposta(resposta)
-    transacoes = dados.get("transacoes") if isinstance(dados, dict) else None
-    return transacoes if isinstance(transacoes, list) else []
+    """Busca as transações de todas as contas/conexões no intervalo [desde,
+    ate]. A paginação é controlada aqui (uma chamada isolada e rápida por
+    página, via cursor) — não pedida ao modelo dentro de um único prompt."""
+    mapa_contas = _listar_contas()
+
+    brutas: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    pagina_num = 0
+    while True:
+        pagina_num += 1
+        argumentos: Dict[str, Any] = {"from": desde, "to": ate, "page_size": PAGE_SIZE}
+        if cursor:
+            argumentos["cursor"] = cursor
+        pagina = ia.chamar_ferramenta_unica(FERRAMENTA_TRANSACOES, argumentos, timeout=TIMEOUT_FERRAMENTA)
+        transacoes_pagina = pagina.get("transactions") if isinstance(pagina, dict) else None
+        if isinstance(transacoes_pagina, list):
+            brutas.extend(transacoes_pagina)
+        print(
+            f"[upx] página {pagina_num}: {len(transacoes_pagina or [])} transação(ões)",
+            file=sys.stderr,
+        )
+
+        paginacao = (pagina or {}).get("pagination") or {}
+        if not paginacao.get("has_more"):
+            break
+        cursor = paginacao.get("next_cursor")
+        if not cursor:
+            break
+
+    resultado = []
+    for bruta in brutas:
+        transaction_id = bruta.get("transaction_id")
+        if not transaction_id:
+            continue
+
+        conta_id = bruta.get("account_id")
+        info_conta = mapa_contas.get(conta_id, {})
+        categoria_conta = info_conta.get("categoria", "other")
+
+        # conta que não é cartão de crédito + pendente = descarta; qualquer
+        # outra combinação = mantém (fatura de cartão demora a fechar, mas o
+        # valor da compra já é definitivo mesmo pendente).
+        if bruta.get("is_pending") and categoria_conta != "credit_card":
+            continue
+
+        valor_bruto = bruta.get("amount")
+        valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto
+        descricao = str(bruta.get("description") or "").strip() or "(sem descrição)"
+
+        resultado.append({
+            "transactionId": str(transaction_id),
+            "instituicao": info_conta.get("instituicao", "UPX"),
+            "contaCategoria": categoria_conta,
+            "contaNome": info_conta.get("nome", "UPX"),
+            "data": str(bruta.get("posted_date") or "")[:10],
+            "tipo": config.TIPO_RECEITA if bruta.get("direction") == "inflow" else config.TIPO_DESPESA,
+            "valor": abs(float(valor or 0)),
+            "descricao": descricao,
+        })
+    return resultado
 
 
 JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pendente
@@ -271,48 +239,32 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
 
 def sincronizar_investimentos(conexao) -> int:
     """Salva um snapshot do dia de cada posição de investimento. Devolve
-    quantas posições foram gravadas."""
-    prompt = (
-        "Chame a ferramenta de listar investimentos da UPX Financial pra TODAS "
-        "as contas/conexões de investimento ativas. Se a resposta paginar "
-        "(`has_more`/`next_cursor`), busque todas as páginas antes de "
-        "responder. Se precisar do nome da instituição de cada posição e ele "
-        "não vier direto na ferramenta de investimentos, cruze com a "
-        "ferramenta de listar contas pelo id da conta/conexão. Pra cada "
-        "posição, devolva: um id da posição/holding, o nome da instituição, o "
-        "nome do ativo, o tipo (ação, fundo, renda fixa, etc.), o valor atual "
-        "e a quantidade (null se não se aplicar, ex.: renda fixa)."
-    )
-    resposta = ia.chamar(
-        prompt,
-        sistema=SISTEMA_UPX,
-        modelo=config.MODELO_ANALISE,
-        schema=_SCHEMA_INVESTIMENTOS,
-        ferramentas=[FERRAMENTA_CONEXOES, FERRAMENTA_CONTAS, FERRAMENTA_INVESTIMENTOS],
-        mcp_da_conta=True,
-        timeout=TIMEOUT_SINCRONIZACAO,
-    )
-    dados = ia.json_da_resposta(resposta)
-    brutas = dados.get("posicoes") if isinstance(dados, dict) else None
-    if not isinstance(brutas, list) or not brutas:
+    quantas posições foram gravadas. Não pagina: a ferramenta de
+    investimentos devolve a lista completa numa chamada só (sem
+    `pagination`/`has_more` no retorno)."""
+    bruto = ia.chamar_ferramenta_unica(FERRAMENTA_INVESTIMENTOS, {}, timeout=TIMEOUT_FERRAMENTA)
+    investimentos_brutos = bruto.get("investments") if isinstance(bruto, dict) else None
+    if not isinstance(investimentos_brutos, list) or not investimentos_brutos:
         return 0
 
     hoje = hoje_iso()
     posicoes = []
-    for bruta in brutas:
-        try:
-            holding_id = str(bruta["holdingId"])
-        except (KeyError, TypeError):
+    for bruta in investimentos_brutos:
+        holding_id = bruta.get("holding_id")
+        if not holding_id:
             continue
+        valor_bruto = bruta.get("value")
+        valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto
+        instituicao = str(bruta.get("institution_name") or "UPX")
         posicoes.append({
             "id": f"upx:{holding_id}:{hoje}",
             "data": hoje,
-            "itemId": str(bruta.get("instituicao") or "upx"),
-            "conta": str(bruta.get("instituicao") or "UPX"),
-            "tipo": str(bruta.get("tipo") or ""),
-            "nome": str(bruta.get("nome") or "Ativo sem nome"),
-            "valor": float(bruta.get("valor") or 0),
-            "quantidade": bruta.get("quantidade"),
+            "itemId": instituicao,
+            "conta": instituicao,
+            "tipo": str(bruta.get("category") or bruta.get("asset_class") or ""),
+            "nome": str(bruta.get("name") or "Ativo sem nome"),
+            "valor": float(valor or 0),
+            "quantidade": bruta.get("quantity"),
         })
     if not posicoes:
         return 0

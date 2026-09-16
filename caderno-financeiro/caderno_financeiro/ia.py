@@ -111,6 +111,134 @@ def chamar(
     return resposta
 
 
+def chamar_ferramenta_unica(
+    ferramenta: str,
+    argumentos: Dict[str, Any],
+    *,
+    modelo: Optional[str] = None,
+    timeout: int = TIMEOUT_PADRAO,
+) -> Any:
+    """Pede ao Claude pra chamar UMA ferramenta MCP com argumentos exatos e
+    devolve o resultado BRUTO da ferramenta — lido direto do stream de
+    eventos (`--output-format stream-json`), não do texto final da resposta.
+
+    Por quê: se o resultado tivesse que passar pelo texto final (como em
+    `chamar`), o modelo precisaria GERAR de novo, token a token, cada campo
+    que a ferramenta já devolveu — caro, lento, e trunca quando a página é
+    grande (o modelo tem um teto de tokens de saída por resposta). Lendo o
+    tool_result direto do stream, a única coisa que o modelo decide é chamar
+    a ferramenta; os dados em si nunca passam pela geração de texto. Isso é o
+    que permite pedir UMA página por chamada (paginação controlada pelo
+    Python) sem que o custo/tempo dispare com o volume de dados — ver
+    `upx_sync.py`.
+
+    `ferramenta` é o nome completo já sanitizado (`mcp__...`). `modelo` usa
+    `config.MODELO_EXTRACAO` (haiku) por padrão: a única tarefa do modelo
+    aqui é localizar e invocar a ferramenta pedida, não precisa de raciocínio
+    elaborado."""
+    modelo = modelo or config.MODELO_EXTRACAO
+    prompt = (
+        f"Chame a ferramenta `{ferramenta}` com estes argumentos exatos "
+        f"(json): {json.dumps(argumentos, ensure_ascii=False)}\n"
+        f"Depois que a ferramenta responder, apenas confirme com \"ok\" — "
+        f"não repita, não resuma e não reformate o resultado."
+    )
+    comando = [
+        binario_claude(),
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--system-prompt",
+        "Você só chama a ferramenta pedida, com os argumentos exatos dados, "
+        "e confirma com \"ok\" — nunca repete nem resume o resultado.",
+        "--model",
+        modelo,
+        "--no-session-persistence",
+        "--allowed-tools",
+        ferramenta,
+        "--permission-mode",
+        "acceptEdits",
+    ]
+
+    with tempfile.TemporaryDirectory(prefix="caderno-ia-") as vazio:
+        try:
+            processo = subprocess.run(
+                comando,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=vazio,
+            )
+        except subprocess.TimeoutExpired as erro:
+            raise ErroIA(f"o Claude não respondeu em {timeout}s") from erro
+
+    if processo.returncode != 0:
+        raise ErroIA(_mensagem_de_falha(processo.stdout, processo.stderr))
+
+    resultado = _extrair_tool_result(processo.stdout, ferramenta)
+    if resultado is None:
+        raise ErroIA(
+            f"não encontrei o resultado de `{ferramenta}` na resposta do CLI:\n"
+            f"{processo.stdout[-1200:]}"
+        )
+    if isinstance(resultado, str):
+        # O Claude Code trunca tool_results grandes demais (persiste em
+        # arquivo à parte e devolve um aviso de texto em vez do JSON) — nesse
+        # caso não dá pra decodificar como dict. O chamador precisa saber
+        # disso pra reduzir o volume pedido (ex.: um page_size menor), não só
+        # receber uma string onde esperava um objeto.
+        raise ErroIA(
+            f"`{ferramenta}` devolveu um resultado grande demais pra caber na "
+            f"resposta (o Claude Code truncou); peça menos dados por chamada "
+            f"(ex.: um page_size menor). Início da mensagem:\n{resultado[:500]}"
+        )
+    return resultado
+
+
+def _extrair_tool_result(saida_stream_json: str, ferramenta: str) -> Any:
+    """Varre a saída de `--output-format stream-json` (uma linha = um evento)
+    e devolve o conteúdo — já decodificado de JSON quando possível — do
+    tool_result cujo tool_use correspondente chamou `ferramenta`. Ignora
+    outras ferramentas que apareçam no meio (ex.: o Claude Code às vezes
+    precisa de um `ToolSearch` interno pra "carregar" a ferramenta MCP antes
+    de poder chamá-la — isso gera tool_use/tool_result extras que não são o
+    que queremos)."""
+    id_da_chamada = None
+    for linha in saida_stream_json.splitlines():
+        linha = linha.strip()
+        if not linha:
+            continue
+        try:
+            evento = json.loads(linha)
+        except json.JSONDecodeError:
+            continue
+
+        if evento.get("type") == "assistant":
+            for bloco in evento.get("message", {}).get("content", []):
+                if bloco.get("type") == "tool_use" and bloco.get("name") == ferramenta:
+                    id_da_chamada = bloco.get("id")
+
+        if evento.get("type") == "user" and id_da_chamada:
+            for bloco in evento.get("message", {}).get("content", []):
+                if bloco.get("type") != "tool_result" or bloco.get("tool_use_id") != id_da_chamada:
+                    continue
+                conteudo = bloco.get("content")
+                if isinstance(conteudo, list):
+                    conteudo = "".join(
+                        c.get("text", "") for c in conteudo
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    )
+                if not isinstance(conteudo, str):
+                    return conteudo
+                try:
+                    return json.loads(conteudo)
+                except json.JSONDecodeError:
+                    return conteudo
+    return None
+
+
 def _mensagem_de_falha(saida: str, erro: str) -> str:
     bruto = f"{saida}\n{erro}".strip()
     minusculo = bruto.lower()
