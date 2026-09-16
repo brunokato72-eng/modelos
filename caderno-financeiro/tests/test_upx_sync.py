@@ -305,6 +305,80 @@ class TestSincronizar(unittest.TestCase):
 
         self.assertEqual(resultado["transacoesNovas"], 2)
 
+    def test_daniela_biz_e_sempre_educacao_sem_chamar_ia(self):
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-daniela", valor=200.0, descricao="Transferência enviada|Daniela Biz",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_not_called()
+        self.assertEqual(resultado["paraRevisao"], 0)
+        self.assertEqual(lancamentos[0]["categoria"], "Educação")
+
+    def test_ana_paula_castro_freitas_e_sempre_saude_sem_chamar_ia(self):
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-anapaula", valor=250.0,
+            descricao="Transferência enviada|ANA PAULA DE CASTRO FREITAS",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_not_called()
+        self.assertEqual(lancamentos[0]["categoria"], "Saúde")
+
+    def test_letycia_acima_de_200_e_moradia_sem_chamar_ia(self):
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-letycia-alto", valor=1800.0,
+            descricao="Transferência enviada|Letycia Pereira Soares Kato",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_not_called()
+        self.assertEqual(lancamentos[0]["categoria"], "Moradia")
+
+    def test_letycia_abaixo_de_200_vai_pra_ia_normalmente(self):
+        """Valores baixos pra Letycia podem não ser aluguel/condomínio —
+        não força a categoria, deixa a IA decidir (e a revisão, se incerto)."""
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-letycia-baixo", valor=50.0,
+            descricao="Transferência enviada|Letycia Pereira Soares Kato",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Pessoal", "confianca": 0.6}]) as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_called_once()
+        self.assertEqual(lancamentos[0]["categoria"], "Pessoal")
+
+    def test_categoria_conhecida_so_vale_pra_despesa(self):
+        """Uma Receita da mesma contraparte (ex.: reembolso dela) não é a
+        mensalidade em si — não força a categoria conhecida."""
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-anapaula-receita", valor=250.0, direction="inflow",
+            descricao="Reembolso recebido pelo Pix|ANA PAULA DE CASTRO FREITAS",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Reembolso", "confianca": 0.8}]) as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_called_once()
+        self.assertEqual(lancamentos[0]["categoria"], "Reembolso")
+
     def test_pagina_todas_as_paginas_ate_has_more_ser_falso(self):
         """Reproduz o cenário que antes travava o modelo (várias páginas) —
         agora é o Python que segue o cursor, uma chamada isolada por página."""

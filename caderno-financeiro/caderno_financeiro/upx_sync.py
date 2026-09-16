@@ -238,6 +238,26 @@ JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pende
 # que só assentou depois; a deduplicação por origem_id garante que reimportar
 # a mesma janela todo dia não gera lançamento repetido.
 
+# Comerciantes/pessoas recorrentes que o usuário sempre associa à mesma
+# categoria (confirmado por ele) — decidir isso com uma chamada de IA seria
+# mais lento, mais caro e arriscaria errar onde já se sabe a resposta certa.
+# Só vale pra Despesa: a mesma contraparte numa Receita (ex.: um reembolso
+# dela) é outra coisa, não a mensalidade em si.
+def _categoria_conhecida(descricao: str, tipo: str, valor: float) -> Optional[str]:
+    if tipo != config.TIPO_DESPESA:
+        return None
+    d = descricao.lower()
+    if "daniela biz" in d:
+        return "Educação"  # aulas de inglês, mensal
+    if "ana paula de castro freitas" in d or "ana paula de c freitas" in d:
+        return "Saúde"  # terapia, mensal
+    if "letycia pereira soares" in d and valor > 200:
+        # aluguel (início do mês) + condomínio (meio do mês) — valores acima
+        # de R$200 pra ela são quase sempre isso; valores menores podem ser
+        # outra coisa e ficam pra IA/revisão decidir normalmente.
+        return "Moradia"
+    return None
+
 
 def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = None) -> Dict[str, Any]:
     """Roda a sincronização completa. Por padrão busca uma janela fixa de
@@ -287,19 +307,38 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
 
     resultado: Dict[str, Any] = {"transacoesNovas": 0, "paraRevisao": 0, "duplicadas": duplicadas}
     if pendentes:
-        classificacoes = ia.categorizar_transacoes(
-            [{"descricao": t["descricao"], "valor": t["valor"], "tipo": t["tipo"]} for t in pendentes]
-        )
+        # separa o que já tem categoria conhecida (não gasta chamada de IA
+        # nem risca a fila de revisão) do que precisa ser categorizado.
+        categorias_conhecidas: Dict[int, str] = {}
+        indices_para_ia: List[int] = []
+        para_ia = []
+        for i, t in enumerate(pendentes):
+            conhecida = _categoria_conhecida(t["descricao"], t["tipo"], t["valor"])
+            if conhecida:
+                categorias_conhecidas[i] = conhecida
+            else:
+                indices_para_ia.append(i)
+                para_ia.append({"descricao": t["descricao"], "valor": t["valor"], "tipo": t["tipo"]})
+
+        classificacoes = ia.categorizar_transacoes(para_ia) if para_ia else []
+        classificacoes_por_indice = dict(zip(indices_para_ia, classificacoes))
+
         criado_em = db.agora()
         linhas = []
-        for transacao, classificacao in zip(pendentes, classificacoes):
-            confianca = classificacao.get("confianca", 0.0)
-            incerto = confianca < config.PLUGGY_CONFIANCA_MINIMA
+        for i, transacao in enumerate(pendentes):
+            if i in categorias_conhecidas:
+                categoria = categorias_conhecidas[i]
+                incerto = False
+            else:
+                classificacao = classificacoes_por_indice[i]
+                categoria = classificacao.get("categoria", "Outros")
+                confianca = classificacao.get("confianca", 0.0)
+                incerto = confianca < config.PLUGGY_CONFIANCA_MINIMA
             linhas.append({
                 "id": uuid.uuid4().hex,
                 "data": transacao["data"],
                 "tipo": transacao["tipo"],
-                "categoria": classificacao.get("categoria", "Outros"),
+                "categoria": categoria,
                 "valor": transacao["valor"],
                 "valorTotal": transacao["valor"],
                 "parcelaAtual": 1,
