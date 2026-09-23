@@ -300,11 +300,20 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
     print(f"[upx] {len(brutas)} transação(ões) bruta(s) recebida(s) entre {desde} e {ate}", file=sys.stderr)
     pendentes = []
     duplicadas = 0
+    vistos_nesta_leva = set()
     for bruta in brutas:
         try:
             id_origem = str(bruta["transactionId"])
         except (KeyError, TypeError):
             continue
+        # dedup contra o banco (sincronizações anteriores) E contra a própria
+        # leva atual — a paginação já trouxe a mesma transação duas vezes
+        # numa mesma chamada (cursor com overlap), e sem essa segunda checagem
+        # as duas viram "pendente", batendo no UNIQUE (origem, origem_id) na
+        # hora de inserir e derrubando a sincronização inteira.
+        if id_origem in vistos_nesta_leva:
+            continue
+        vistos_nesta_leva.add(id_origem)
         if db.origem_ja_importada(conexao, "upx", id_origem):
             continue
         data = str(bruta.get("data") or hoje_iso())[:10]

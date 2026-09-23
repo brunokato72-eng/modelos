@@ -423,6 +423,20 @@ class TestSincronizar(unittest.TestCase):
         ia_mock.assert_called_once()
         self.assertEqual(lancamentos[0]["categoria"], "Reembolso")
 
+    def test_mesma_transacao_repetida_na_leva_nao_quebra_insercao(self):
+        """Se a paginação trouxer o mesmo transaction_id duas vezes numa
+        mesma chamada (cursor com overlap), a segunda cópia não pode virar
+        'pendente' de novo — bateria no UNIQUE (origem, origem_id) na hora
+        de inserir e derrubaria a sincronização inteira."""
+        repetida = transacao_bruta(transaction_id="tx-repetida", valor=42.0, descricao="Padaria")
+        transacoes = [pagina([repetida, dict(repetida)])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Alimentação", "confianca": 0.9}]):
+            resultado = upx_sync.sincronizar(conexao)
+
+        self.assertEqual(resultado["transacoesNovas"], 1)
+
     def test_pagina_todas_as_paginas_ate_has_more_ser_falso(self):
         """Reproduz o cenário que antes travava o modelo (várias páginas) —
         agora é o Python que segue o cursor, uma chamada isolada por página."""
