@@ -661,8 +661,18 @@ def cmd_score(args) -> int:
         orcamentos = db.listar_orcamentos(conexao)
         lancamentos = db.listar(conexao)
 
-    meta_valor = float(meta_texto) if meta_texto else None
-    resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
+        meta_valor = float(meta_texto) if meta_texto else None
+        resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
+
+        if args.registrar_alertas:
+            mes = resultado["data"][:7]
+            for categoria in resultado["categoriasEmRiscoDeEstourar"]:
+                anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], mes)
+                notificar = anterior is None or categoria["projecao"] >= anterior * 1.2
+                categoria["notificarAgora"] = notificar
+                if notificar:
+                    db.registrar_projecao_alertada(conexao, categoria["categoria"], mes, categoria["projecao"])
+
     if args.json:
         imprimir_json(resultado)
         return 0
@@ -681,8 +691,9 @@ def cmd_score(args) -> int:
     for alerta in resultado["alertasComportamento"]:
         print(pintar(f"  ⚠ {alerta}", AMARELO))
     for categoria in resultado["categoriasEmRiscoDeEstourar"]:
+        icone = "🔔" if categoria.get("notificarAgora") else "📈"
         print(pintar(
-            f"  📈 {categoria['categoria']} projetada em {formatar(categoria['projecao'])} "
+            f"  {icone} {categoria['categoria']} projetada em {formatar(categoria['projecao'])} "
             f"(limite {formatar(categoria['limite'])})", AMARELO,
         ))
     print()
@@ -889,6 +900,8 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p = subcomandos.add_parser("score", help="score comportamental do dia (0-100), conectado à meta de poupança")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--registrar-alertas", action="store_true",
+                    help="marca categorias em risco como notificadas (uso pela rotina automática, evita repetir alerta)")
     p.set_defaults(funcao=cmd_score)
 
     p = subcomandos.add_parser("investimentos", help="lista posições de investimento sincronizadas via Pluggy")

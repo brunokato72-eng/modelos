@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS origens_ignoradas (
     criado_em TEXT NOT NULL,
     PRIMARY KEY (origem, origem_id)
 );
+
+-- Guarda a última projeção de estouro já notificada por categoria/mês, pra
+-- rotina diária não repetir o mesmo alerta todo dia enquanto a categoria
+-- continuar acima do limite — só avisa de novo se a projeção piorar bastante
+-- desde o último aviso (ver `db.ultima_projecao_alertada`).
+CREATE TABLE IF NOT EXISTS alertas_categoria (
+    categoria     TEXT NOT NULL,
+    mes           TEXT NOT NULL,
+    projecao      REAL NOT NULL,
+    atualizado_em TEXT NOT NULL,
+    PRIMARY KEY (categoria, mes)
+);
 """
 
 ESQUEMA_INDICES = """
@@ -501,3 +513,18 @@ def listar_orcamentos(conexao: sqlite3.Connection) -> List[Dict[str, Any]]:
         "SELECT categoria, limite, criado_em, atualizado_em FROM orcamentos ORDER BY categoria"
     )
     return [dict(l) for l in linhas]
+
+
+def ultima_projecao_alertada(conexao: sqlite3.Connection, categoria: str, mes: str) -> Optional[float]:
+    linha = conexao.execute(
+        "SELECT projecao FROM alertas_categoria WHERE categoria = ? AND mes = ?", (categoria, mes)
+    ).fetchone()
+    return linha["projecao"] if linha else None
+
+
+def registrar_projecao_alertada(conexao: sqlite3.Connection, categoria: str, mes: str, projecao: float) -> None:
+    conexao.execute(
+        "INSERT INTO alertas_categoria (categoria, mes, projecao, atualizado_em) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(categoria, mes) DO UPDATE SET projecao = excluded.projecao, atualizado_em = excluded.atualizado_em",
+        (categoria, mes, projecao, agora()),
+    )

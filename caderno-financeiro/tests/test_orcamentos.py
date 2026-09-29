@@ -153,5 +153,35 @@ class TestSaudeFinanceira(unittest.TestCase):
         self.assertTrue(any("comprometem" in a for a in resultado["alertas"]))
 
 
+class TestAlertasCategoriaNoBanco(unittest.TestCase):
+    """Estado que impede a rotina diária de repetir o mesmo alerta de categoria
+    estourada todo dia — só ela usa `--registrar-alertas` (ver cli.cmd_score)."""
+
+    def setUp(self):
+        self.pasta = tempfile.TemporaryDirectory()
+        self.addCleanup(self.pasta.cleanup)
+        self.banco = Path(self.pasta.name) / "teste.db"
+
+    def test_sem_historico_retorna_none(self):
+        with db.banco(self.banco) as conexao:
+            self.assertIsNone(db.ultima_projecao_alertada(conexao, "Compras", "2026-09"))
+
+    def test_registra_e_le_de_volta(self):
+        with db.banco(self.banco) as conexao:
+            db.registrar_projecao_alertada(conexao, "Compras", "2026-09", 1000.0)
+            self.assertEqual(db.ultima_projecao_alertada(conexao, "Compras", "2026-09"), 1000.0)
+
+    def test_registrar_de_novo_atualiza_em_vez_de_duplicar(self):
+        with db.banco(self.banco) as conexao:
+            db.registrar_projecao_alertada(conexao, "Compras", "2026-09", 1000.0)
+            db.registrar_projecao_alertada(conexao, "Compras", "2026-09", 1300.0)
+            self.assertEqual(db.ultima_projecao_alertada(conexao, "Compras", "2026-09"), 1300.0)
+
+    def test_meses_diferentes_sao_independentes(self):
+        with db.banco(self.banco) as conexao:
+            db.registrar_projecao_alertada(conexao, "Compras", "2026-09", 1000.0)
+            self.assertIsNone(db.ultima_projecao_alertada(conexao, "Compras", "2026-10"))
+
+
 if __name__ == "__main__":
     unittest.main()
