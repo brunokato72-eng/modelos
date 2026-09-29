@@ -201,6 +201,12 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] =
 # skins de jogo, assinaturas via checkout de terceiro cobradas na fatura da Apple).
 GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 
+# Capex de negócio (ex.: entrada de franquia) não é gasto de estilo de vida —
+# some do cálculo de poupança projetada e dos sinais comportamentais, senão um
+# aporte pontual de milhares de reais faz o score ficar sempre crítico até o
+# capex terminar, o que não diz nada sobre o comportamento do usuário.
+CATEGORIA_NEGOCIO = "Negócio"
+
 
 def _dia_de_referencia(mes: str) -> tuple[str, int, int]:
     """(data de referência, dia do mês já decorrido, dias totais do mês).
@@ -294,7 +300,9 @@ def projecao_poupanca(
     despesas_ate_agora_centavos = sum(
         para_centavos(e.get("valor") or 0)
         for e in lancamentos
-        if e.get("tipo") == config.TIPO_DESPESA and (e.get("data") or "")[:7] == mes
+        if e.get("tipo") == config.TIPO_DESPESA
+        and (e.get("data") or "")[:7] == mes
+        and e.get("categoria") != CATEGORIA_NEGOCIO
     )
     despesa_projetada_centavos = (
         round(despesas_ate_agora_centavos / dia_atual * dias_totais) if dia_atual else despesas_ate_agora_centavos
@@ -372,14 +380,14 @@ def _sinais_comportamentais(
     janela_inicio = somar_dias(dia_iso, -6)
     contagem_recente: Dict[str, int] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA:
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO:
             continue
         data = e.get("data") or ""
         if janela_inicio <= data <= dia_iso:
             contagem_recente[e["categoria"]] = contagem_recente.get(e["categoria"], 0) + 1
     totais_por_mes: Dict[str, Dict[str, int]] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA:
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO:
             continue
         m = (e.get("data") or "")[:7]
         if m >= mes:

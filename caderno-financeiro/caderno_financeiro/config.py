@@ -27,6 +27,7 @@ CATEGORIAS_DESPESA = (
     "Educação",
     "Pessoal",
     "Assinaturas",
+    "Negócio",
     "Outros",
 )
 
