@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import config
 from .calculadora import executar_calculo
-from .datas import mes_anterior, mes_atual
+from .datas import dias_no_mes, hoje_iso, mes_anterior, mes_atual, somar_dias
 from .valores import para_centavos, para_reais
 
 
@@ -194,6 +194,259 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] =
         "mediaDespesas3MesesAnteriores": media_despesas_anteriores,
         "comprometimentoFuturoPercentual": comprometimento_percentual,
         "alertas": alertas,
+    }
+
+
+# Contrapartes conhecidas por puxar compra por impulso (achado no histórico real:
+# skins de jogo, assinaturas via checkout de terceiro cobradas na fatura da Apple).
+GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
+
+
+def _dia_de_referencia(mes: str) -> tuple[str, int, int]:
+    """(data de referência, dia do mês já decorrido, dias totais do mês).
+
+    Pra mês corrente usa hoje; pra mês fechado considera o mês inteiro decorrido
+    (não faz sentido "projetar" um mês que já acabou)."""
+    hoje = hoje_iso()
+    dias_totais = dias_no_mes(mes)
+    if hoje[:7] == mes:
+        return hoje, int(hoje[8:10]), dias_totais
+    return f"{mes}-{dias_totais:02d}", dias_totais, dias_totais
+
+
+def _receita_esperada_mes(lancamentos: Sequence[Dict[str, Any]], mes: str) -> float:
+    """Mediana das receitas totais dos últimos meses fechados — salário chega de
+    uma vez só, então "projetar pelo ritmo" não funciona pra receita como funciona
+    pra despesa."""
+    totais = []
+    alvo = mes
+    for _ in range(3):
+        alvo = mes_anterior(alvo)
+        total = sum(
+            para_centavos(e.get("valor") or 0)
+            for e in lancamentos
+            if (e.get("data") or "")[:7] == alvo and e.get("tipo") == config.TIPO_RECEITA
+        )
+        if total:
+            totais.append(total)
+    if totais:
+        totais.sort()
+        meio = len(totais) // 2
+        mediana = totais[meio] if len(totais) % 2 else (totais[meio - 1] + totais[meio]) / 2
+        return para_reais(round(mediana))
+    receitas_do_mes = sum(
+        para_centavos(e.get("valor") or 0)
+        for e in lancamentos
+        if (e.get("data") or "")[:7] == mes and e.get("tipo") == config.TIPO_RECEITA
+    )
+    return para_reais(receitas_do_mes)
+
+
+def projecao_categoria(
+    lancamentos: Sequence[Dict[str, Any]],
+    categoria: str,
+    limite: Optional[float],
+    mes: str,
+) -> Dict[str, Any]:
+    """Projeta o total do mês numa categoria pelo ritmo de gasto até agora
+    (regra de três simples, não regressão de verdade — não precisa de mais)."""
+    _, dia_atual, dias_totais = _dia_de_referencia(mes)
+    gasto_centavos = sum(
+        para_centavos(e.get("valor") or 0)
+        for e in lancamentos
+        if e.get("tipo") == config.TIPO_DESPESA
+        and e.get("categoria") == categoria
+        and (e.get("data") or "")[:7] == mes
+    )
+    projecao_centavos = round(gasto_centavos / dia_atual * dias_totais) if dia_atual else gasto_centavos
+    limite_centavos = para_centavos(limite) if limite else None
+    return {
+        "categoria": categoria,
+        "gasto": para_reais(gasto_centavos),
+        "projecao": para_reais(projecao_centavos),
+        "limite": limite,
+        "vaiEstourar": limite_centavos is not None and projecao_centavos > limite_centavos,
+    }
+
+
+def projecao_orcamentos(
+    lancamentos: Sequence[Dict[str, Any]],
+    orcamentos: Sequence[Dict[str, Any]],
+    mes: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    mes = mes or mes_atual()
+    projecoes = [
+        projecao_categoria(lancamentos, o["categoria"], o["limite"], mes) for o in orcamentos
+    ]
+    return sorted(projecoes, key=lambda p: (not p["vaiEstourar"], -p["projecao"]))
+
+
+def projecao_poupanca(
+    lancamentos: Sequence[Dict[str, Any]],
+    mes: Optional[str] = None,
+    meta_valor: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Poupança projetada até o fim do mês vs a meta definida — é o elo entre o
+    score do dia e "quanto eu quero economizar"."""
+    mes = mes or mes_atual()
+    _, dia_atual, dias_totais = _dia_de_referencia(mes)
+
+    despesas_ate_agora_centavos = sum(
+        para_centavos(e.get("valor") or 0)
+        for e in lancamentos
+        if e.get("tipo") == config.TIPO_DESPESA and (e.get("data") or "")[:7] == mes
+    )
+    despesa_projetada_centavos = (
+        round(despesas_ate_agora_centavos / dia_atual * dias_totais) if dia_atual else despesas_ate_agora_centavos
+    )
+    receita_esperada = _receita_esperada_mes(lancamentos, mes)
+    poupanca_projetada = receita_esperada - para_reais(despesa_projetada_centavos)
+
+    resultado: Dict[str, Any] = {
+        "mes": mes,
+        "receitaEsperada": receita_esperada,
+        "despesaProjetada": para_reais(despesa_projetada_centavos),
+        "poupancaProjetada": round(poupanca_projetada, 2),
+    }
+    if meta_valor:
+        resultado["metaPoupanca"] = meta_valor
+        resultado["diferencaParaMeta"] = round(poupanca_projetada - meta_valor, 2)
+        resultado["aderenciaPercentual"] = round(poupanca_projetada / meta_valor * 100, 1)
+        resultado["noCaminho"] = poupanca_projetada >= meta_valor
+    return resultado
+
+
+def _sinais_comportamentais(
+    lancamentos: Sequence[Dict[str, Any]],
+    orcamentos: Sequence[Dict[str, Any]],
+    dia_iso: str,
+) -> Dict[str, Any]:
+    """Os 4 sinais que definimos: transação grande, gatilho de impulso conhecido,
+    mudança de padrão numa categoria historicamente baixa, e frequência alta no
+    mesmo dia. Cada desconto vem com o alerta que explica de onde saiu."""
+    mes = dia_iso[:7]
+    limite_por_categoria = {o["categoria"]: para_centavos(o["limite"]) for o in orcamentos}
+
+    gasto_mes_por_categoria: Dict[str, int] = {}
+    for e in lancamentos:
+        if e.get("tipo") != config.TIPO_DESPESA or (e.get("data") or "")[:7] != mes:
+            continue
+        gasto_mes_por_categoria[e["categoria"]] = gasto_mes_por_categoria.get(e["categoria"], 0) + para_centavos(
+            e.get("valor") or 0
+        )
+
+    despesas_do_dia = [
+        e for e in lancamentos if e.get("tipo") == config.TIPO_DESPESA and e.get("data") == dia_iso
+    ]
+
+    pontuacao = 100
+    alertas: List[str] = []
+
+    # 1. transação grande: consumiu mais de 40% do que restava no orçamento da categoria
+    for e in despesas_do_dia:
+        categoria = e.get("categoria")
+        limite_centavos = limite_por_categoria.get(categoria)
+        if not limite_centavos:
+            continue
+        restante = max(0, limite_centavos - gasto_mes_por_categoria.get(categoria, 0))
+        valor_centavos = para_centavos(e.get("valor") or 0)
+        if restante > 0 and valor_centavos > 0.4 * restante:
+            pontuacao -= 25
+            alertas.append(
+                f"gasto de {para_reais(valor_centavos):.2f} em {categoria} consumiu mais de 40% "
+                f"do que restava no orçamento"
+            )
+
+    # 2. gatilhos de impulso conhecidos
+    for e in despesas_do_dia:
+        descricao = (e.get("descricao") or "").lower()
+        if any(gatilho in descricao for gatilho in GATILHOS_IMPULSO):
+            pontuacao -= 20
+            alertas.append(f"gatilho de impulso conhecido: {e.get('descricao')}")
+    ifood_hoje = sum(1 for e in despesas_do_dia if "ifood" in (e.get("descricao") or "").lower())
+    if ifood_hoje >= 2:
+        pontuacao -= 20
+        alertas.append(f"{ifood_hoje}x iFood hoje")
+
+    # 3. mudança de padrão: categoria historicamente pouco usada com 3+ lançamentos em <7 dias
+    janela_inicio = somar_dias(dia_iso, -6)
+    contagem_recente: Dict[str, int] = {}
+    for e in lancamentos:
+        if e.get("tipo") != config.TIPO_DESPESA:
+            continue
+        data = e.get("data") or ""
+        if janela_inicio <= data <= dia_iso:
+            contagem_recente[e["categoria"]] = contagem_recente.get(e["categoria"], 0) + 1
+    totais_por_mes: Dict[str, Dict[str, int]] = {}
+    for e in lancamentos:
+        if e.get("tipo") != config.TIPO_DESPESA:
+            continue
+        m = (e.get("data") or "")[:7]
+        if m >= mes:
+            continue
+        totais_por_mes.setdefault(m, {})
+        totais_por_mes[m][e["categoria"]] = totais_por_mes[m].get(e["categoria"], 0) + 1
+    for categoria, qtd_recente in contagem_recente.items():
+        if qtd_recente < 3:
+            continue
+        historico = [totais.get(categoria, 0) for totais in totais_por_mes.values()]
+        media_mensal = sum(historico) / len(historico) if historico else 0
+        if media_mensal < qtd_recente:
+            pontuacao -= 20
+            alertas.append(
+                f"{categoria} teve {qtd_recente} lançamentos nos últimos 7 dias — "
+                f"média histórica é {media_mensal:.1f} por mês inteiro"
+            )
+
+    # 4. frequência alta no mesmo dia
+    contagem_dia: Dict[str, int] = {}
+    for e in despesas_do_dia:
+        contagem_dia[e["categoria"]] = contagem_dia.get(e["categoria"], 0) + 1
+    for categoria, qtd in contagem_dia.items():
+        if qtd >= 3:
+            pontuacao -= 15
+            alertas.append(f"{qtd} transações em {categoria} hoje")
+
+    return {"pontuacaoComportamento": max(0, pontuacao), "alertas": alertas}
+
+
+def score_dia(
+    lancamentos: Sequence[Dict[str, Any]],
+    orcamentos: Sequence[Dict[str, Any]],
+    meta_valor: Optional[float] = None,
+    dia_iso: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Score do dia (0-100): 60% comportamento (os 4 sinais), 40% aderência à
+    meta de poupança do mês — é o que conecta o alerta do dia a dia com
+    "quanto eu quero economizar", não só com limites de categoria isolados."""
+    dia_iso = dia_iso or hoje_iso()
+    mes = dia_iso[:7]
+
+    comportamento = _sinais_comportamentais(lancamentos, orcamentos, dia_iso)
+    poupanca = projecao_poupanca(lancamentos, mes, meta_valor)
+    categorias_em_risco = [c for c in projecao_orcamentos(lancamentos, orcamentos, mes) if c["vaiEstourar"]]
+
+    pontuacao_comportamento = comportamento["pontuacaoComportamento"]
+    aderencia = poupanca.get("aderenciaPercentual")
+    if aderencia is not None:
+        pontuacao_meta = max(0, min(100, aderencia))
+        pontuacao_final = round(0.6 * pontuacao_comportamento + 0.4 * pontuacao_meta)
+    else:
+        pontuacao_final = pontuacao_comportamento
+
+    pontuacao_final = max(0, min(100, pontuacao_final))
+    classificacao = (
+        "tranquilo" if pontuacao_final >= 70 else "atenção" if pontuacao_final >= 40 else "crítico"
+    )
+
+    return {
+        "data": dia_iso,
+        "pontuacaoFinal": pontuacao_final,
+        "classificacao": classificacao,
+        "pontuacaoComportamento": pontuacao_comportamento,
+        "alertasComportamento": comportamento["alertas"],
+        "poupanca": poupanca,
+        "categoriasEmRiscoDeEstourar": categorias_em_risco,
     }
 
 

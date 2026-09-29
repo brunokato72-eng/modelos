@@ -620,6 +620,75 @@ def cmd_saude(args) -> int:
     return 0
 
 
+def cmd_meta(args) -> int:
+    with db.banco(args.banco) as conexao:
+        if args.definir:
+            try:
+                valor = float(args.definir.replace(",", "."))
+            except ValueError as erro:
+                print(pintar(f"erro: {erro}", VERMELHO))
+                return 1
+            db.definir_config(conexao, "meta_poupanca_valor", str(valor))
+            print(pintar(f"meta de poupança definida em {formatar(valor)}/mês.", VERDE))
+            return 0
+        meta_texto = db.ler_config(conexao, "meta_poupanca_valor")
+        lancamentos = db.listar(conexao)
+
+    meta_valor = float(meta_texto) if meta_texto else None
+    mes = validar_mes(args.mes) if args.mes else mes_atual()
+    resultado = estatisticas.projecao_poupanca(lancamentos, mes, meta_valor)
+    if args.json:
+        imprimir_json(resultado)
+        return 0
+
+    if meta_valor is None:
+        print(pintar("nenhuma meta definida ainda — `caderno meta --definir <valor>`", AMARELO))
+    print(pintar(f"\nMeta de poupança — {resultado['mes']}", NEGRITO))
+    print(f"  receita esperada: {formatar(resultado['receitaEsperada'])}")
+    print(f"  despesa projetada até fim do mês: {formatar(resultado['despesaProjetada'])}")
+    print(f"  poupança projetada: {formatar(resultado['poupancaProjetada'])}")
+    if meta_valor:
+        cor = VERDE if resultado["noCaminho"] else VERMELHO
+        status = "no caminho" if resultado["noCaminho"] else "fora do caminho"
+        print(f"  meta: {formatar(meta_valor)} ({resultado['aderenciaPercentual']}%) — {pintar(status, cor)}")
+    print()
+    return 0
+
+
+def cmd_score(args) -> int:
+    with db.banco(args.banco) as conexao:
+        meta_texto = db.ler_config(conexao, "meta_poupanca_valor")
+        orcamentos = db.listar_orcamentos(conexao)
+        lancamentos = db.listar(conexao)
+
+    meta_valor = float(meta_texto) if meta_texto else None
+    resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
+    if args.json:
+        imprimir_json(resultado)
+        return 0
+
+    cor = (
+        VERDE if resultado["classificacao"] == "tranquilo"
+        else AMARELO if resultado["classificacao"] == "atenção"
+        else VERMELHO
+    )
+    print(pintar(f"\nScore do dia — {resultado['data']}", NEGRITO))
+    print(f"  {pintar(str(resultado['pontuacaoFinal']), cor)}/100 ({resultado['classificacao']})")
+    print(f"  comportamento: {resultado['pontuacaoComportamento']}/100")
+    aderencia = resultado["poupanca"].get("aderenciaPercentual")
+    if aderencia is not None:
+        print(f"  aderência à meta de poupança: {aderencia}%")
+    for alerta in resultado["alertasComportamento"]:
+        print(pintar(f"  ⚠ {alerta}", AMARELO))
+    for categoria in resultado["categoriasEmRiscoDeEstourar"]:
+        print(pintar(
+            f"  📈 {categoria['categoria']} projetada em {formatar(categoria['projecao'])} "
+            f"(limite {formatar(categoria['limite'])})", AMARELO,
+        ))
+    print()
+    return 0
+
+
 def cmd_upx_sincronizar(args) -> int:
     with db.banco(args.banco) as conexao:
         try:
@@ -811,6 +880,16 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("-m", "--mes")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_saude)
+
+    p = subcomandos.add_parser("meta", help="define/mostra a meta de poupança mensal e a projeção até o fim do mês")
+    p.add_argument("--definir", metavar="VALOR", help="valor mensal de poupança-alvo, em reais")
+    p.add_argument("-m", "--mes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_meta)
+
+    p = subcomandos.add_parser("score", help="score comportamental do dia (0-100), conectado à meta de poupança")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_score)
 
     p = subcomandos.add_parser("investimentos", help="lista posições de investimento sincronizadas via Pluggy")
     p.add_argument("--json", action="store_true")

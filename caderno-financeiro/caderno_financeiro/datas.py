@@ -67,3 +67,15 @@ def dias_entre(a_iso: str, b_iso: str) -> int:
     a = datetime.strptime(a_iso, "%Y-%m-%d").date()
     b = datetime.strptime(b_iso, "%Y-%m-%d").date()
     return abs((a - b).days)
+
+
+def somar_dias(data_iso: str, n: int) -> str:
+    from datetime import timedelta
+
+    data = datetime.strptime(data_iso, "%Y-%m-%d").date() + timedelta(days=n)
+    return data.isoformat()
+
+
+def dias_no_mes(mes: str) -> int:
+    ano, m = (int(p) for p in mes.split("-"))
+    return calendar.monthrange(ano, m)[1]
