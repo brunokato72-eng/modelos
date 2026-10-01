@@ -201,6 +201,42 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] =
 # skins de jogo, assinaturas via checkout de terceiro cobradas na fatura da Apple).
 GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 
+# Nos primeiros dias do mês, gasto/dia_atual*dias_totais explode qualquer
+# transação isolada (R$959 num único dia 1 vira "projeção de R$29.739"). Até
+# completar essa quantidade de dias, a projeção pelo ritmo é misturada com a
+# média histórica da categoria (quanto menos dias, mais peso pra média) — é um
+# shrinkage simples, não regressão de verdade, só pra não disparar alerta
+# bobo por falta de amostra.
+MIN_DIAS_PROJECAO = 5
+
+
+def _media_historica_despesa_centavos(
+    lancamentos: Sequence[Dict[str, Any]], mes: str, categoria: Optional[str] = None
+) -> Optional[int]:
+    totais = []
+    alvo = mes
+    for _ in range(3):
+        alvo = mes_anterior(alvo)
+        total = sum(
+            para_centavos(e.get("valor") or 0)
+            for e in lancamentos
+            if (e.get("data") or "")[:7] == alvo
+            and e.get("tipo") == config.TIPO_DESPESA
+            and e.get("categoria") != CATEGORIA_NEGOCIO
+            and (categoria is None or e.get("categoria") == categoria)
+        )
+        if total:
+            totais.append(total)
+    return round(sum(totais) / len(totais)) if totais else None
+
+
+def _projetar_com_shrinkage(ritmo_centavos: int, dia_atual: int, media_historica_centavos: Optional[int]) -> int:
+    if dia_atual >= MIN_DIAS_PROJECAO or media_historica_centavos is None:
+        return ritmo_centavos
+    peso = dia_atual / MIN_DIAS_PROJECAO
+    return round(peso * ritmo_centavos + (1 - peso) * media_historica_centavos)
+
+
 # Capex de negócio (ex.: entrada de franquia) não é gasto de estilo de vida —
 # some do cálculo de poupança projetada e dos sinais comportamentais, senão um
 # aporte pontual de milhares de reais faz o score ficar sempre crítico até o
@@ -264,14 +300,20 @@ def projecao_categoria(
         and e.get("categoria") == categoria
         and (e.get("data") or "")[:7] == mes
     )
-    projecao_centavos = round(gasto_centavos / dia_atual * dias_totais) if dia_atual else gasto_centavos
+    ritmo_centavos = round(gasto_centavos / dia_atual * dias_totais) if dia_atual else gasto_centavos
+    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes, categoria)
+    projecao_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, media_historica_centavos)
     limite_centavos = para_centavos(limite) if limite else None
     return {
         "categoria": categoria,
         "gasto": para_reais(gasto_centavos),
         "projecao": para_reais(projecao_centavos),
         "limite": limite,
-        "vaiEstourar": limite_centavos is not None and projecao_centavos > limite_centavos,
+        # gasto_centavos > 0 exige pelo menos 1 lançamento real no mês — sem isso a
+        # "projeção" é só a média histórica puxando sozinha, não comportamento de hoje.
+        "vaiEstourar": (
+            limite_centavos is not None and gasto_centavos > 0 and projecao_centavos > limite_centavos
+        ),
     }
 
 
@@ -304,9 +346,11 @@ def projecao_poupanca(
         and (e.get("data") or "")[:7] == mes
         and e.get("categoria") != CATEGORIA_NEGOCIO
     )
-    despesa_projetada_centavos = (
+    ritmo_despesa_centavos = (
         round(despesas_ate_agora_centavos / dia_atual * dias_totais) if dia_atual else despesas_ate_agora_centavos
     )
+    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes)
+    despesa_projetada_centavos = _projetar_com_shrinkage(ritmo_despesa_centavos, dia_atual, media_historica_centavos)
     receita_esperada = _receita_esperada_mes(lancamentos, mes)
     poupanca_projetada = receita_esperada - para_reais(despesa_projetada_centavos)
 

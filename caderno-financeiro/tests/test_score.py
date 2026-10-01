@@ -32,6 +32,53 @@ class TestProjecaoCategoria(unittest.TestCase):
         self.assertTrue(resultado["vaiEstourar"])
 
 
+class TestProjecaoComPoucosDias(unittest.TestCase):
+    """Dia 1-2 do mês não pode projetar via ritmo puro — gasto/1*30 explode
+    qualquer transação isolada. Tem que puxar pra média histórica."""
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
+    def test_dia_1_nao_explode_projecao_sem_historico(self, _hoje):
+        lancamentos = [_lanc("2026-10-01", 1000, "Compras")]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
+        # sem histórico pra puxar, cai no ritmo puro mesmo (não tem o que fazer)
+        self.assertEqual(resultado["projecao"], 31000.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
+    def test_dia_1_com_historico_fica_proximo_da_media(self, _hoje):
+        lancamentos = [
+            _lanc("2026-07-10", 500, "Compras"),
+            _lanc("2026-08-10", 500, "Compras"),
+            _lanc("2026-09-10", 500, "Compras"),
+            _lanc("2026-10-01", 1000, "Compras"),
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
+        # ritmo puro seria 31000; com média histórica de 500 puxando forte (peso 1/5
+        # no dia 1), a projeção fica bem mais baixa que isso
+        self.assertLess(resultado["projecao"], 10000.0)
+        self.assertGreater(resultado["projecao"], 500.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
+    def test_sem_gasto_real_no_mes_nao_marca_estouro_so_pela_media_historica(self, _hoje):
+        lancamentos = [
+            _lanc("2026-07-10", 2000, "Saúde"),
+            _lanc("2026-08-10", 2000, "Saúde"),
+            _lanc("2026-09-10", 2000, "Saúde"),
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Saúde", 1100, "2026-10")
+        self.assertEqual(resultado["gasto"], 0.0)
+        self.assertFalse(resultado["vaiEstourar"])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
+    def test_a_partir_do_dia_minimo_usa_so_o_ritmo(self, _hoje):
+        lancamentos = [
+            _lanc("2026-09-10", 500, "Compras"),
+            _lanc("2026-10-05", 500, "Compras"),
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
+        # dia 5 == MIN_DIAS_PROJECAO -> ritmo puro: 500/5*31 = 3100
+        self.assertEqual(resultado["projecao"], 3100.0)
+
+
 class TestProjecaoPoupanca(unittest.TestCase):
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_usa_mediana_de_receita_dos_meses_anteriores_fechados(self, _hoje):
