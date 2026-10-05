@@ -13,7 +13,7 @@ from . import pluggy_cliente as pc
 from . import pluggy_sync
 from . import upx_sync
 from .calculadora import OPERACOES, executar_calculo
-from .datas import mes_atual, validar_mes
+from .datas import ciclo_atual, mes_atual, rotulo_ciclo, validar_mes
 from .valores import formatar
 
 VERDE = "\033[32m"
@@ -577,15 +577,15 @@ def cmd_orcamento(args) -> int:
         orcamentos = db.listar_orcamentos(conexao)
         lancamentos = db.listar(conexao)
 
-    mes = validar_mes(args.mes) if args.mes else mes_atual()
-    progresso = estatisticas.progresso_orcamentos(lancamentos, orcamentos, mes)
+    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo(ciclo_atual()[1])
+    progresso = estatisticas.progresso_orcamentos(lancamentos, orcamentos, rotulo)
     if args.json:
         imprimir_json(progresso)
         return 0
     if not progresso:
         print(pintar("nenhum orçamento definido ainda — `caderno orcamento --definir <categoria> <limite>`", AMARELO))
         return 0
-    print(pintar(f"Orçamentos de {mes}", NEGRITO))
+    print(pintar(f"Orçamentos do ciclo de {rotulo} (fatura fecha dia 27)", NEGRITO))
     for item in progresso:
         cor = VERMELHO if item["estourado"] else (AMARELO if item["percentual"] >= 80 else VERDE)
         barra = "█" * max(0, min(25, int(round(item["percentual"] / 4))))
@@ -635,17 +635,17 @@ def cmd_meta(args) -> int:
         lancamentos = db.listar(conexao)
 
     meta_valor = float(meta_texto) if meta_texto else None
-    mes = validar_mes(args.mes) if args.mes else mes_atual()
-    resultado = estatisticas.projecao_poupanca(lancamentos, mes, meta_valor)
+    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo(ciclo_atual()[1])
+    resultado = estatisticas.projecao_poupanca(lancamentos, rotulo, meta_valor)
     if args.json:
         imprimir_json(resultado)
         return 0
 
     if meta_valor is None:
         print(pintar("nenhuma meta definida ainda — `caderno meta --definir <valor>`", AMARELO))
-    print(pintar(f"\nMeta de poupança — {resultado['mes']}", NEGRITO))
+    print(pintar(f"\nMeta de poupança — ciclo de {resultado['ciclo']} ({resultado['inicio']} a {resultado['fim']})", NEGRITO))
     print(f"  receita esperada: {formatar(resultado['receitaEsperada'])}")
-    print(f"  despesa projetada até fim do mês: {formatar(resultado['despesaProjetada'])}")
+    print(f"  despesa projetada até fim do ciclo: {formatar(resultado['despesaProjetada'])}")
     print(f"  poupança projetada: {formatar(resultado['poupancaProjetada'])}")
     if meta_valor:
         cor = VERDE if resultado["noCaminho"] else VERMELHO
@@ -665,13 +665,13 @@ def cmd_score(args) -> int:
         resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
 
         if args.registrar_alertas:
-            mes = resultado["data"][:7]
+            ciclo = resultado["poupanca"]["ciclo"]
             for categoria in resultado["categoriasEmRiscoDeEstourar"]:
-                anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], mes)
+                anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], ciclo)
                 notificar = anterior is None or categoria["projecao"] >= anterior * 1.2
                 categoria["notificarAgora"] = notificar
                 if notificar:
-                    db.registrar_projecao_alertada(conexao, categoria["categoria"], mes, categoria["projecao"])
+                    db.registrar_projecao_alertada(conexao, categoria["categoria"], ciclo, categoria["projecao"])
 
     if args.json:
         imprimir_json(resultado)

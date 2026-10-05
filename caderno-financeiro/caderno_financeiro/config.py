@@ -66,6 +66,11 @@ MODELO_ANALISE = os.environ.get("CADERNO_MODELO_ANALISE", "sonnet")
 # no dia seguinte pro relógio do servidor, e o lançamento vai pro mês errado.
 FUSO_HORARIO = os.environ.get("CADERNO_TIMEZONE", "America/Sao_Paulo")
 
+# Orçamento, meta de poupança e score usam o ciclo de fatura (fecha todo dia
+# 27, alinhado ao fechamento do cartão/salário), não o mês calendário —
+# ver `datas.ciclo_de`.
+DIA_FECHAMENTO_CICLO = int(os.environ.get("CADERNO_DIA_FECHAMENTO_CICLO", "27"))
+
 # Integração com o Meu Pluggy (Open Finance) — sincronização automática de
 # extrato bancário e investimentos. Client ID/Secret vêm de variável de
 # ambiente, nunca de arquivo versionado (são credenciais de acesso à conta

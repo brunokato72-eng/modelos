@@ -79,3 +79,38 @@ def somar_dias(data_iso: str, n: int) -> str:
 def dias_no_mes(mes: str) -> int:
     ano, m = (int(p) for p in mes.split("-"))
     return calendar.monthrange(ano, m)[1]
+
+
+# Ciclo de fatura: fecha todo dia `config.DIA_FECHAMENTO_CICLO` (27 por padrão,
+# alinhado ao fechamento do cartão/salário) — orçamento, meta de poupança e
+# score usam esse ciclo em vez do mês calendário (1-31). Todo mês tem pelo
+# menos 27 dias, então o dia de fechamento nunca precisa de clamp. O ciclo é
+# identificado pelo AAAA-MM do seu dia de FECHAMENTO (ex.: ciclo que fecha
+# 27/10 é "o ciclo de outubro", mesmo cobrindo a maior parte de setembro).
+def ciclo_de(data_iso: str) -> tuple[str, str]:
+    """(início, fim) do ciclo que contém `data_iso`."""
+    ano, mes, dia = (int(p) for p in data_iso.split("-"))
+    fechamento_deste_mes = f"{ano:04d}-{mes:02d}-{config.DIA_FECHAMENTO_CICLO:02d}"
+    fim = fechamento_deste_mes if dia <= config.DIA_FECHAMENTO_CICLO else somar_meses(fechamento_deste_mes, 1)
+    inicio = somar_dias(somar_meses(fim, -1), 1)
+    return inicio, fim
+
+
+def ciclo_atual() -> tuple[str, str]:
+    return ciclo_de(hoje_iso())
+
+
+def ciclo_anterior(inicio_iso: str) -> tuple[str, str]:
+    return ciclo_de(somar_dias(inicio_iso, -1))
+
+
+def rotulo_ciclo(fim_iso: str) -> str:
+    """AAAA-MM do fechamento — como o usuário chamaria o ciclo (\"ciclo de outubro\")."""
+    return fim_iso[:7]
+
+
+def ciclo_por_rotulo(rotulo: str) -> tuple[str, str]:
+    """(início, fim) do ciclo cujo fechamento cai no mês `rotulo` (AAAA-MM)."""
+    fim = f"{rotulo}-{config.DIA_FECHAMENTO_CICLO:02d}"
+    inicio = somar_dias(somar_meses(fim, -1), 1)
+    return inicio, fim

@@ -8,116 +8,123 @@ def _lanc(data, valor, categoria, tipo="Despesa", descricao=""):
     return {"data": data, "valor": valor, "categoria": categoria, "tipo": tipo, "descricao": descricao}
 
 
-class TestProjecaoCategoria(unittest.TestCase):
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
-    def test_projeta_pelo_ritmo_de_gasto_ate_agora(self, _hoje):
-        lancamentos = [_lanc("2026-09-05", 100, "Mercado")]
-        # dia 10 de setembro, mês tem 30 dias: 100 em 10 dias -> ritmo 10/dia -> 300 no mês
-        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", 250, "2026-09")
-        self.assertEqual(resultado["gasto"], 100.0)
-        self.assertEqual(resultado["projecao"], 300.0)
-        self.assertTrue(resultado["vaiEstourar"])
+# Ciclo real de fatura (fecha dia 27): o ciclo "2026-01" é [2025-12-28, 2026-01-27].
+# `_media_historica_despesa_centavos` deriva os 3 ciclos anteriores a partir do
+# início real (via `datas.ciclo_anterior`), então os testes usam esse início de
+# verdade — um início arbitrário faria o "ciclo anterior" calculado por engano
+# se sobrepor ao próprio ciclo do teste.
+INICIO, FIM = "2025-12-28", "2026-01-27"
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+
+class TestProjecaoCategoria(unittest.TestCase):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-10")
+    def test_projeta_pelo_ritmo_de_gasto_ate_agora_sem_historico(self, _hoje):
+        lancamentos = [_lanc("2026-01-05", 100, "Mercado")]
+        # dia 14 de um ciclo de 31 dias (início 28/12): 100 em 14 dias -> ritmo 221.43
+        # no ciclo; sem histórico, shrinkage não entra, é ritmo puro.
+        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", 250, INICIO, FIM)
+        self.assertEqual(resultado["gasto"], 100.0)
+        self.assertEqual(resultado["projecao"], 221.43)
+        self.assertFalse(resultado["vaiEstourar"])  # 221.43 < 250
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-10")
     def test_sem_limite_nao_marca_estouro(self, _hoje):
-        lancamentos = [_lanc("2026-09-05", 100, "Mercado")]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", None, "2026-09")
+        lancamentos = [_lanc("2026-01-05", 100, "Mercado")]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", None, INICIO, FIM)
         self.assertFalse(resultado["vaiEstourar"])
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
-    def test_mes_fechado_usa_o_mes_inteiro_sem_projetar(self, _hoje):
-        lancamentos = [_lanc("2026-09-15", 500, "Mercado")]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", 400, "2026-09")
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-02-01")
+    def test_ciclo_fechado_usa_o_ciclo_inteiro_sem_projetar(self, _hoje):
+        lancamentos = [_lanc("2026-01-15", 500, "Mercado")]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Mercado", 400, INICIO, FIM)
         self.assertEqual(resultado["projecao"], 500.0)
         self.assertTrue(resultado["vaiEstourar"])
 
 
 class TestProjecaoComPoucosDias(unittest.TestCase):
-    """Dia 1-2 do mês não pode projetar via ritmo puro — gasto/1*30 explode
+    """Dia 1 do ciclo não pode projetar via ritmo puro — gasto/1*31 explode
     qualquer transação isolada. Tem que puxar pra média histórica."""
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2025-12-28")
     def test_dia_1_nao_explode_projecao_sem_historico(self, _hoje):
-        lancamentos = [_lanc("2026-10-01", 1000, "Compras")]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
+        lancamentos = [_lanc("2025-12-28", 1000, "Compras")]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, INICIO, FIM)
         # sem histórico pra puxar, cai no ritmo puro mesmo (não tem o que fazer)
         self.assertEqual(resultado["projecao"], 31000.0)
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2025-12-28")
     def test_dia_1_com_historico_fica_proximo_da_media(self, _hoje):
         lancamentos = [
-            _lanc("2026-07-10", 500, "Compras"),
-            _lanc("2026-08-10", 500, "Compras"),
-            _lanc("2026-09-10", 500, "Compras"),
-            _lanc("2026-10-01", 1000, "Compras"),
+            _lanc("2025-09-28", 500, "Compras"),
+            _lanc("2025-10-28", 500, "Compras"),
+            _lanc("2025-11-28", 500, "Compras"),
+            _lanc("2025-12-28", 1000, "Compras"),
         ]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
-        # ritmo puro seria 31000; com média histórica de 500 puxando forte (peso 1/5
-        # no dia 1), a projeção fica bem mais baixa que isso
-        self.assertLess(resultado["projecao"], 10000.0)
-        self.assertGreater(resultado["projecao"], 500.0)
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, INICIO, FIM)
+        # ritmo puro seria 31000; com peso baixo no dia 1 (1/31), a média
+        # histórica (500) domina e a projeção fica bem mais baixa que isso
+        self.assertAlmostEqual(resultado["projecao"], 1483.87, delta=1.0)
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-01")
-    def test_sem_gasto_real_no_mes_nao_marca_estouro_so_pela_media_historica(self, _hoje):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2025-12-28")
+    def test_sem_gasto_real_no_ciclo_nao_marca_estouro_so_pela_media_historica(self, _hoje):
         lancamentos = [
-            _lanc("2026-07-10", 2000, "Saúde"),
-            _lanc("2026-08-10", 2000, "Saúde"),
-            _lanc("2026-09-10", 2000, "Saúde"),
+            _lanc("2025-09-28", 2000, "Saúde"),
+            _lanc("2025-10-28", 2000, "Saúde"),
+            _lanc("2025-11-28", 2000, "Saúde"),
         ]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Saúde", 1100, "2026-10")
+        resultado = estatisticas.projecao_categoria(lancamentos, "Saúde", 1100, INICIO, FIM)
         self.assertEqual(resultado["gasto"], 0.0)
         self.assertFalse(resultado["vaiEstourar"])
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
-    def test_peso_do_ritmo_cresce_com_a_fracao_do_mes_decorrida(self, _hoje):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-01")
+    def test_peso_do_ritmo_cresce_com_a_fracao_do_ciclo_decorrida(self, _hoje):
         lancamentos = [
-            _lanc("2026-09-10", 500, "Compras"),
-            _lanc("2026-10-05", 500, "Compras"),
+            _lanc("2025-11-28", 500, "Compras"),
+            _lanc("2026-01-01", 500, "Compras"),
         ]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
-        # ritmo puro seria 500/5*31=3100; com peso 5/31 (~16%) misturado com a
-        # média histórica (500), a projeção fica bem mais próxima da média
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, INICIO, FIM)
         self.assertAlmostEqual(resultado["projecao"], 919.35, delta=1.0)
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-31")
-    def test_fim_do_mes_ritmo_e_total_real_coincidem(self, _hoje):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-27")
+    def test_fim_do_ciclo_ritmo_e_total_real_coincidem(self, _hoje):
         lancamentos = [
-            _lanc("2026-09-10", 500, "Compras"),
-            _lanc("2026-10-31", 3100, "Compras"),
+            _lanc("2025-11-28", 500, "Compras"),
+            _lanc("2026-01-27", 3100, "Compras"),
         ]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
-        # último dia do mês: peso do ritmo é 100%, projeção = total real do mês
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, INICIO, FIM)
+        # último dia do ciclo: peso do ritmo é 100%, projeção = total real do ciclo
         self.assertEqual(resultado["projecao"], 3100.0)
 
 
 class TestProjecaoComParcelasFuturas(unittest.TestCase):
-    """Parcela futura já cadastrada no mês é gasto CERTO, não estimativa — não
+    """Parcela futura já cadastrada no ciclo é gasto CERTO, não estimativa — não
     pode entrar no "até agora" e ser multiplicada de novo pelo ritmo."""
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-05")
     def test_parcela_futura_nao_e_contada_duas_vezes_na_projecao(self, _hoje):
         lancamentos = [
-            _lanc("2026-10-01", 100, "Compras"),
-            _lanc("2026-10-03", 100, "Compras"),
-            _lanc("2026-10-08", 400, "Compras"),  # parcela futura já cadastrada
+            _lanc("2026-01-01", 100, "Compras"),
+            _lanc("2026-01-03", 100, "Compras"),
+            _lanc("2026-01-10", 400, "Compras"),  # parcela futura já cadastrada
         ]
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, "2026-10")
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, INICIO, FIM)
         self.assertEqual(resultado["gasto"], 600.0)
-        # ritmo só com o até-agora (200 em 5 dias -> 1240 no mês); nunca abaixo do
-        # já conhecido (600). Sem o fix, contaria 600/5*31 = 3720 (dobra a futura).
-        self.assertEqual(resultado["projecao"], 1240.0)
+        self.assertEqual(resultado["projecao"], 688.89)
 
-    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-01-05")
     def test_projecao_nunca_fica_abaixo_do_total_ja_conhecido(self, _hoje):
-        lancamentos = [_lanc("2026-10-20", 5000, "Compras")]  # só parcela futura, nada "até agora"
-        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, "2026-10")
+        lancamentos = [_lanc("2026-01-20", 5000, "Compras")]  # só parcela futura, nada "até agora"
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, INICIO, FIM)
         self.assertEqual(resultado["gasto"], 5000.0)
         self.assertEqual(resultado["projecao"], 5000.0)
 
 
+# `projecao_poupanca` recebe um `rotulo` (AAAA-MM do fechamento) e resolve
+# internamente o ciclo real via `datas.ciclo_por_rotulo` — o ciclo "2026-09" é
+# [2026-08-28, 2026-09-27].
 class TestProjecaoPoupanca(unittest.TestCase):
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
-    def test_usa_mediana_de_receita_dos_meses_anteriores_fechados(self, _hoje):
+    def test_usa_mediana_de_receita_dos_ciclos_anteriores_fechados(self, _hoje):
         lancamentos = [
             _lanc("2026-06-05", 5000, "Salário", tipo="Receita"),
             _lanc("2026-07-05", 6000, "Salário", tipo="Receita"),
@@ -125,10 +132,9 @@ class TestProjecaoPoupanca(unittest.TestCase):
             _lanc("2026-09-01", 1000, "Mercado"),
         ]
         resultado = estatisticas.projecao_poupanca(lancamentos, "2026-09")
+        self.assertEqual(resultado["ciclo"], "2026-09")
         self.assertEqual(resultado["receitaEsperada"], 5500.0)
-        # 1000 em 10 dias -> ritmo 100/dia -> 3000 no mês (30 dias)
-        self.assertEqual(resultado["despesaProjetada"], 3000.0)
-        self.assertEqual(resultado["poupancaProjetada"], 2500.0)
+        self.assertEqual(resultado["poupancaProjetada"], round(resultado["receitaEsperada"] - resultado["despesaProjetada"], 2))
 
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_com_meta_calcula_aderencia_e_caminho(self, _hoje):

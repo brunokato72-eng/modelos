@@ -65,7 +65,7 @@ class TestProgressoOrcamentos(unittest.TestCase):
     def test_gasto_dentro_do_limite(self):
         lancamentos = [lancamento(categoria="Mercado", valor=300.0, data="2026-08-05")]
         orcamentos = [{"categoria": "Mercado", "limite": 800.0}]
-        progresso = progresso_orcamentos(lancamentos, orcamentos, mes="2026-08")
+        progresso = progresso_orcamentos(lancamentos, orcamentos, rotulo="2026-08")
         self.assertEqual(len(progresso), 1)
         item = progresso[0]
         self.assertEqual(item["gasto"], 300.0)
@@ -76,7 +76,7 @@ class TestProgressoOrcamentos(unittest.TestCase):
     def test_gasto_estourado(self):
         lancamentos = [lancamento(categoria="Mercado", valor=900.0, data="2026-08-05")]
         orcamentos = [{"categoria": "Mercado", "limite": 800.0}]
-        progresso = progresso_orcamentos(lancamentos, orcamentos, mes="2026-08")
+        progresso = progresso_orcamentos(lancamentos, orcamentos, rotulo="2026-08")
         item = progresso[0]
         self.assertTrue(item["estourado"])
         self.assertEqual(item["restante"], 0.0)
@@ -87,12 +87,12 @@ class TestProgressoOrcamentos(unittest.TestCase):
             lancamento(categoria="Transporte", valor=100.0, data="2026-08-05"),
         ]
         orcamentos = [{"categoria": "Mercado", "limite": 800.0}]
-        progresso = progresso_orcamentos(lancamentos, orcamentos, mes="2026-08")
+        progresso = progresso_orcamentos(lancamentos, orcamentos, rotulo="2026-08")
         self.assertEqual(progresso[0]["gasto"], 0.0)
 
     def test_sem_gasto_no_mes(self):
         orcamentos = [{"categoria": "Mercado", "limite": 800.0}]
-        progresso = progresso_orcamentos([], orcamentos, mes="2026-08")
+        progresso = progresso_orcamentos([], orcamentos, rotulo="2026-08")
         self.assertEqual(progresso[0]["gasto"], 0.0)
         self.assertEqual(progresso[0]["percentual"], 0.0)
 
