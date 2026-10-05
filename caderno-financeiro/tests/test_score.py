@@ -79,6 +79,31 @@ class TestProjecaoComPoucosDias(unittest.TestCase):
         self.assertEqual(resultado["projecao"], 3100.0)
 
 
+class TestProjecaoComParcelasFuturas(unittest.TestCase):
+    """Parcela futura já cadastrada no mês é gasto CERTO, não estimativa — não
+    pode entrar no "até agora" e ser multiplicada de novo pelo ritmo."""
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
+    def test_parcela_futura_nao_e_contada_duas_vezes_na_projecao(self, _hoje):
+        lancamentos = [
+            _lanc("2026-10-01", 100, "Compras"),
+            _lanc("2026-10-03", 100, "Compras"),
+            _lanc("2026-10-08", 400, "Compras"),  # parcela futura já cadastrada
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, "2026-10")
+        self.assertEqual(resultado["gasto"], 600.0)
+        # ritmo só com o até-agora (200 em 5 dias -> 1240 no mês); nunca abaixo do
+        # já conhecido (600). Sem o fix, contaria 600/5*31 = 3720 (dobra a futura).
+        self.assertEqual(resultado["projecao"], 1240.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
+    def test_projecao_nunca_fica_abaixo_do_total_ja_conhecido(self, _hoje):
+        lancamentos = [_lanc("2026-10-20", 5000, "Compras")]  # só parcela futura, nada "até agora"
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 300, "2026-10")
+        self.assertEqual(resultado["gasto"], 5000.0)
+        self.assertEqual(resultado["projecao"], 5000.0)
+
+
 class TestProjecaoPoupanca(unittest.TestCase):
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_usa_mediana_de_receita_dos_meses_anteriores_fechados(self, _hoje):

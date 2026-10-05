@@ -291,28 +291,43 @@ def projecao_categoria(
     mes: str,
 ) -> Dict[str, Any]:
     """Projeta o total do mês numa categoria pelo ritmo de gasto até agora
-    (regra de três simples, não regressão de verdade — não precisa de mais)."""
-    _, dia_atual, dias_totais = _dia_de_referencia(mes)
-    gasto_centavos = sum(
-        para_centavos(e.get("valor") or 0)
-        for e in lancamentos
+    (regra de três simples, não regressão de verdade — não precisa de mais).
+
+    Parcelas futuras já cadastradas no mês (datadas depois de hoje) são gasto
+    CERTO, não estimativa — contá-las dentro do "até agora" e multiplicar de
+    novo pelo ritmo inflava a projeção em cima do que já era sabido."""
+    data_referencia, dia_atual, dias_totais = _dia_de_referencia(mes)
+    despesas_categoria_mes = [
+        e for e in lancamentos
         if e.get("tipo") == config.TIPO_DESPESA
         and e.get("categoria") == categoria
         and (e.get("data") or "")[:7] == mes
+    ]
+    gasto_ate_hoje_centavos = sum(
+        para_centavos(e.get("valor") or 0) for e in despesas_categoria_mes if (e.get("data") or "") <= data_referencia
     )
-    ritmo_centavos = round(gasto_centavos / dia_atual * dias_totais) if dia_atual else gasto_centavos
+    gasto_total_conhecido_centavos = sum(
+        para_centavos(e.get("valor") or 0) for e in despesas_categoria_mes
+    )
+    ritmo_centavos = (
+        round(gasto_ate_hoje_centavos / dia_atual * dias_totais) if dia_atual else gasto_ate_hoje_centavos
+    )
     media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes, categoria)
-    projecao_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, media_historica_centavos)
+    projecao_ritmo_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, media_historica_centavos)
+    # a projeção nunca fica abaixo do que já é certo (parcelas futuras já cadastradas)
+    projecao_centavos = max(projecao_ritmo_centavos, gasto_total_conhecido_centavos)
     limite_centavos = para_centavos(limite) if limite else None
     return {
         "categoria": categoria,
-        "gasto": para_reais(gasto_centavos),
+        "gasto": para_reais(gasto_total_conhecido_centavos),
         "projecao": para_reais(projecao_centavos),
         "limite": limite,
-        # gasto_centavos > 0 exige pelo menos 1 lançamento real no mês — sem isso a
-        # "projeção" é só a média histórica puxando sozinha, não comportamento de hoje.
+        # gasto > 0 exige pelo menos 1 lançamento real no mês — sem isso a "projeção"
+        # é só a média histórica puxando sozinha, não comportamento de hoje.
         "vaiEstourar": (
-            limite_centavos is not None and gasto_centavos > 0 and projecao_centavos > limite_centavos
+            limite_centavos is not None
+            and gasto_total_conhecido_centavos > 0
+            and projecao_centavos > limite_centavos
         ),
     }
 
@@ -337,20 +352,27 @@ def projecao_poupanca(
     """Poupança projetada até o fim do mês vs a meta definida — é o elo entre o
     score do dia e "quanto eu quero economizar"."""
     mes = mes or mes_atual()
-    _, dia_atual, dias_totais = _dia_de_referencia(mes)
+    data_referencia, dia_atual, dias_totais = _dia_de_referencia(mes)
 
-    despesas_ate_agora_centavos = sum(
-        para_centavos(e.get("valor") or 0)
-        for e in lancamentos
+    despesas_mes = [
+        e for e in lancamentos
         if e.get("tipo") == config.TIPO_DESPESA
         and (e.get("data") or "")[:7] == mes
         and e.get("categoria") != CATEGORIA_NEGOCIO
+    ]
+    despesas_ate_agora_centavos = sum(
+        para_centavos(e.get("valor") or 0) for e in despesas_mes if (e.get("data") or "") <= data_referencia
     )
+    despesas_total_conhecido_centavos = sum(para_centavos(e.get("valor") or 0) for e in despesas_mes)
     ritmo_despesa_centavos = (
         round(despesas_ate_agora_centavos / dia_atual * dias_totais) if dia_atual else despesas_ate_agora_centavos
     )
     media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes)
-    despesa_projetada_centavos = _projetar_com_shrinkage(ritmo_despesa_centavos, dia_atual, media_historica_centavos)
+    despesa_projetada_ritmo_centavos = _projetar_com_shrinkage(
+        ritmo_despesa_centavos, dia_atual, media_historica_centavos
+    )
+    # nunca abaixo do que já é certo (parcelas futuras já cadastradas no mês)
+    despesa_projetada_centavos = max(despesa_projetada_ritmo_centavos, despesas_total_conhecido_centavos)
     receita_esperada = _receita_esperada_mes(lancamentos, mes)
     poupanca_projetada = receita_esperada - para_reais(despesa_projetada_centavos)
 
