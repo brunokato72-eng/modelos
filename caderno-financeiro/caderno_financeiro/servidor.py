@@ -185,6 +185,38 @@ def criar_app() -> Flask:
             return _erro("não tinha orçamento definido pra essa categoria", 404)
         return jsonify({"ok": True})
 
+    @app.get("/api/score")
+    def _score():
+        conexao = _conexao()
+        meta_texto = db.ler_config(conexao, "meta_poupanca_valor")
+        meta_valor = float(meta_texto) if meta_texto else None
+        orcamentos = db.listar_orcamentos(conexao)
+        resultado = estatisticas.score_dia(db.listar(conexao), orcamentos, meta_valor)
+        return jsonify(resultado)
+
+    @app.get("/api/meta")
+    def _meta():
+        conexao = _conexao()
+        meta_texto = db.ler_config(conexao, "meta_poupanca_valor")
+        meta_valor = float(meta_texto) if meta_texto else None
+        rotulo = request.args.get("mes")
+        rotulo = validar_mes(rotulo) if rotulo else None
+        resultado = estatisticas.projecao_poupanca(db.listar(conexao), rotulo, meta_valor)
+        resultado["metaDefinida"] = meta_valor
+        return jsonify(resultado)
+
+    @app.post("/api/meta")
+    def _definir_meta():
+        corpo = request.get_json(silent=True) or {}
+        try:
+            valor = float(corpo.get("valor"))
+            if valor <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return _erro("valor inválido")
+        db.definir_config(_conexao(), "meta_poupanca_valor", str(valor))
+        return jsonify({"ok": True})
+
     @app.get("/api/investimentos")
     def _investimentos():
         posicoes = db.listar_posicoes_investimento(_conexao())

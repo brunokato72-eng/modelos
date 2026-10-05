@@ -1,17 +1,18 @@
 :root {
   color-scheme: dark;
-  --fundo: #0b1120;
-  --superficie: #151f32;
-  --superficie-alta: #1c2a42;
-  --borda: #26344c;
-  --texto: #e6edf5;
-  --texto-fraco: #93a3b8;
-  --acento: #14b8a6;
+  --fundo: #0a0f1c;
+  --superficie: #141d30;
+  --superficie-alta: #1b2740;
+  --borda: #253349;
+  --texto: #eef2f8;
+  --texto-fraco: #8ea0ba;
+  --acento: #2dd4bf;
   --acento-forte: #0f766e;
-  --erro: #f87171;
+  --erro: #fb7185;
   --receita: #34d399;
-  --despesa: #f87171;
+  --despesa: #fb7185;
   --alerta: #fbbf24;
+  --sombra: 0 8px 24px -8px rgb(0 0 0 / 0.45);
 }
 
 * { box-sizing: border-box; }
@@ -39,8 +40,10 @@ button {
   color: white;
   padding: 0.7rem 1rem;
   font-size: 1rem;
+  font-weight: 600;
+  transition: opacity 0.15s ease, transform 0.1s ease;
 }
-button:active { opacity: 0.8; }
+button:active { opacity: 0.8; transform: scale(0.98); }
 
 input, textarea, select {
   font-family: inherit;
@@ -86,10 +89,12 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
   justify-content: space-between;
   padding: env(safe-area-inset-top, 0.8rem) 1rem 0.8rem;
   padding-top: calc(env(safe-area-inset-top, 0px) + 0.8rem);
+  background: var(--superficie);
   border-bottom: 1px solid var(--borda);
+  box-shadow: 0 1px 0 0 rgb(0 0 0 / 0.2);
   flex-shrink: 0;
 }
-.cabecalho-titulo { font-weight: 600; }
+.cabecalho-titulo { font-weight: 700; letter-spacing: 0.01em; }
 
 .botao-icone {
   background: transparent;
@@ -110,8 +115,9 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
 .cartao {
   background: var(--superficie);
   border: 1px solid var(--borda);
-  border-radius: 14px;
-  padding: 1rem;
+  border-radius: 16px;
+  padding: 1.1rem;
+  box-shadow: var(--sombra);
 }
 
 #form-registrar label { display: block; margin-bottom: 0.5rem; color: var(--texto-fraco); font-size: 0.9rem; }
@@ -158,13 +164,67 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
 .resumo-caixa .numero.despesa { color: var(--despesa); }
 .resumo-caixa .numero.receita { color: var(--receita); }
 
-.resumo-bloco-titulo, .painel-bloco-titulo { font-size: 0.85rem; color: var(--texto-fraco); margin: 1rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.resumo-bloco-titulo, .painel-bloco-titulo {
+  font-size: 0.8rem; color: var(--texto-fraco); margin: 1.3rem 0 0.6rem;
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem;
+}
+.painel-bloco-subtitulo { text-transform: none; letter-spacing: normal; font-weight: 400; font-size: 0.78rem; }
 .barra-grupo { margin-bottom: 0.6rem; }
 .barra-grupo .barra-topo { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.3rem; }
 .barra-fundo { background: var(--superficie-alta); border-radius: 6px; height: 8px; overflow: hidden; }
 .barra-preenchimento { background: var(--acento); height: 100%; border-radius: 6px; }
 .barra-preenchimento.atencao { background: var(--alerta); }
 .barra-preenchimento.estourado { background: var(--despesa); }
+
+/* score do dia (anel de progresso + alertas) */
+.score-topo { display: flex; align-items: center; gap: 1rem; }
+.anel-wrapper { flex-shrink: 0; width: 72px; height: 72px; }
+.anel-progresso { width: 72px; height: 72px; transform: rotate(-90deg); }
+.anel-fundo { fill: none; stroke: var(--superficie-alta); stroke-width: 7; }
+.anel-frente {
+  fill: none; stroke-width: 7; stroke-linecap: round;
+  stroke: var(--despesa);
+  transition: stroke-dashoffset 0.5s ease;
+}
+.anel-progresso.boa .anel-frente { stroke: var(--receita); }
+.anel-progresso.atencao .anel-frente { stroke: var(--alerta); }
+.anel-progresso.critica .anel-frente { stroke: var(--despesa); }
+.anel-texto {
+  transform: rotate(90deg); transform-origin: 36px 36px;
+  fill: var(--texto); font-size: 1.1rem; font-weight: 700; text-anchor: middle;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.score-detalhe { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.score-rotulo, .meta-rotulo { font-size: 0.78rem; color: var(--texto-fraco); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.score-classificacao { font-weight: 700; text-transform: capitalize; font-size: 1.05rem; }
+.score-classificacao.boa { color: var(--receita); }
+.score-classificacao.atencao { color: var(--alerta); }
+.score-classificacao.critica { color: var(--despesa); }
+.score-alertas { list-style: none; margin: 0.9rem 0 0; padding: 0.8rem 0 0; border-top: 1px solid var(--borda); display: flex; flex-direction: column; gap: 0.45rem; }
+.score-alertas li { font-size: 0.85rem; color: var(--texto); padding-left: 1.1rem; position: relative; }
+.score-alertas li::before { content: "⚠"; position: absolute; left: 0; color: var(--alerta); font-size: 0.8rem; }
+.score-sem-alerta { margin: 0.8rem 0 0; padding-top: 0.8rem; border-top: 1px solid var(--borda); }
+
+/* meta de poupança */
+.meta-topo { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.6rem; }
+.meta-status { font-size: 0.8rem; font-weight: 600; padding: 0.15rem 0.55rem; border-radius: 999px; }
+.meta-status.no-caminho { color: var(--receita); background: rgb(52 211 153 / 0.12); }
+.meta-status.fora-caminho { color: var(--despesa); background: rgb(251 113 133 / 0.12); }
+.meta-barra { height: 10px; margin-bottom: 0.7rem; }
+.meta-numeros { display: flex; justify-content: space-between; font-size: 0.85rem; margin-top: 0.3rem; flex-wrap: wrap; gap: 0.3rem; }
+
+/* indicadores gerais (saúde financeira antiga, recolhido por padrão) */
+.painel-detalhes { margin-top: 0.8rem; }
+.painel-detalhes summary {
+  cursor: pointer; font-size: 0.8rem; color: var(--texto-fraco);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  padding: 0.4rem 0; list-style: none;
+}
+.painel-detalhes summary::-webkit-details-marker { display: none; }
+.painel-detalhes summary::before { content: "▸ "; }
+.painel-detalhes[open] summary::before { content: "▾ "; }
+.painel-detalhes .saude-cartao { margin-top: 0.6rem; }
 
 .saude-cartao { display: flex; align-items: flex-start; gap: 1rem; }
 .saude-pontuacao { font-size: 2rem; font-weight: 700; line-height: 1; flex-shrink: 0; }
@@ -226,11 +286,17 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
-  font-size: 0.7rem;
-  padding: 0.6rem 0.2rem;
+  gap: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 0.6rem 0.2rem 0.5rem;
+  position: relative;
 }
 .aba-botao.ativo { color: var(--acento); }
-.aba-icone { font-size: 1.2rem; }
+.aba-botao.ativo::before {
+  content: ""; position: absolute; top: -1px; left: 30%; right: 30%; height: 2px;
+  background: var(--acento); border-radius: 0 0 3px 3px;
+}
+.aba-icone { font-size: 1.25rem; }
 
 .vazio { color: var(--texto-fraco); text-align: center; padding: 2rem 1rem; }

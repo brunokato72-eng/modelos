@@ -9,7 +9,6 @@ const estado = {
   abaAtiva: "registrar",
   mesResumo: mesAtual(),
   mesHistorico: mesAtual(),
-  mesPainel: mesAtual(),
   categoriasDespesa: [],
   historicoChat: [], // [{pergunta, resposta}]
 };
@@ -357,24 +356,17 @@ function adicionarBlocoBarras(container, titulo, grupos, total) {
 }
 
 // ---------------------------------------------------------------------------
-// painel (saúde financeira + orçamentos + investimentos)
+// painel (score do dia + meta de poupança + orçamentos + investimentos)
 // ---------------------------------------------------------------------------
 
-document.getElementById("painel-mes-anterior").addEventListener("click", () => {
-  estado.mesPainel = somarMes(estado.mesPainel, -1);
-  carregarPainel();
-});
-document.getElementById("painel-mes-seguinte").addEventListener("click", () => {
-  estado.mesPainel = somarMes(estado.mesPainel, 1);
-  carregarPainel();
-});
-
 async function carregarPainel() {
-  document.getElementById("painel-mes-rotulo").textContent = rotuloMes(estado.mesPainel);
-
+  const scoreContainer = document.getElementById("score-cartao");
+  const metaContainer = document.getElementById("meta-cartao");
   const saudeContainer = document.getElementById("saude-cartao");
   const orcamentosContainer = document.getElementById("orcamentos-lista");
   const investimentosContainer = document.getElementById("investimentos-lista");
+  scoreContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  metaContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
   saudeContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
   orcamentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
   investimentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
@@ -385,22 +377,121 @@ async function carregarPainel() {
       estado.categoriasDespesa = panorama.categoriasDespesa;
       preencherSelectCategorias();
     }
-    const [saude, orcamentos, investimentos] = await Promise.all([
-      api(`/api/saude?mes=${estado.mesPainel}`),
-      api(`/api/orcamentos?mes=${estado.mesPainel}`),
+    const [score, meta, saude, orcamentos, investimentos] = await Promise.all([
+      api("/api/score"),
+      api("/api/meta"),
+      api(`/api/saude?mes=${mesAtual()}`),
+      api("/api/orcamentos"),
       api("/api/investimentos"),
     ]);
+    document.getElementById("painel-ciclo-rotulo").textContent =
+      `ciclo de ${rotuloMes(meta.ciclo)} · fecha ${formatarDataCurta(meta.fim)}`;
+    renderizarScore(scoreContainer, score);
+    renderizarMeta(metaContainer, meta);
     renderizarSaude(saudeContainer, saude);
     renderizarOrcamentos(orcamentosContainer, orcamentos);
     renderizarInvestimentos(investimentosContainer, investimentos);
   } catch (erro) {
     if (erro.status !== 401) {
-      saudeContainer.innerHTML = "";
-      saudeContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
-      orcamentosContainer.innerHTML = "";
-      investimentosContainer.innerHTML = "";
+      [scoreContainer, metaContainer, saudeContainer, orcamentosContainer, investimentosContainer].forEach(
+        (c) => (c.innerHTML = "")
+      );
+      scoreContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
     }
   }
+}
+
+const CLASSE_POR_CLASSIFICACAO = {
+  tranquilo: "boa", boa: "boa",
+  "atenção": "atencao",
+  "crítico": "critica", "crítica": "critica",
+};
+
+function renderizarScore(container, s) {
+  container.innerHTML = "";
+  const classe = CLASSE_POR_CLASSIFICACAO[s.classificacao] || "";
+
+  const anel = elementoAnelProgresso(s.pontuacaoFinal, classe);
+  const detalhe = el("div", { class: "score-detalhe" }, [
+    el("span", { class: "score-rotulo", texto: "Score do dia" }),
+    el("span", { class: `score-classificacao ${classe}`, texto: s.classificacao }),
+    el("span", { class: "texto-fraco", texto: `comportamento: ${s.pontuacaoComportamento}/100` }),
+  ]);
+
+  container.appendChild(el("div", { class: "score-topo" }, [anel, detalhe]));
+
+  const alertas = [...(s.alertasComportamento || [])];
+  (s.categoriasEmRiscoDeEstourar || []).forEach((c) => {
+    alertas.push(`${c.categoria}: projeção de ${formatarMoeda(c.projecao)} (limite ${formatarMoeda(c.limite)})`);
+  });
+  if (alertas.length) {
+    const lista = el("ul", { class: "score-alertas" });
+    alertas.forEach((alerta) => lista.appendChild(el("li", { texto: alerta })));
+    container.appendChild(lista);
+  } else {
+    container.appendChild(el("p", { class: "texto-fraco score-sem-alerta", texto: "nada chamando atenção hoje." }));
+  }
+}
+
+function elementoAnelProgresso(percentual, classe) {
+  const p = Math.max(0, Math.min(100, percentual));
+  const raio = 30;
+  const circunferencia = 2 * Math.PI * raio;
+  const offset = circunferencia * (1 - p / 100);
+  const svgNs = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+  svg.setAttribute("viewBox", "0 0 72 72");
+  svg.setAttribute("class", `anel-progresso ${classe}`);
+
+  const fundo = document.createElementNS(svgNs, "circle");
+  fundo.setAttribute("cx", "36"); fundo.setAttribute("cy", "36"); fundo.setAttribute("r", String(raio));
+  fundo.setAttribute("class", "anel-fundo");
+  svg.appendChild(fundo);
+
+  const frente = document.createElementNS(svgNs, "circle");
+  frente.setAttribute("cx", "36"); frente.setAttribute("cy", "36"); frente.setAttribute("r", String(raio));
+  frente.setAttribute("class", "anel-frente");
+  frente.setAttribute("stroke-dasharray", String(circunferencia));
+  frente.setAttribute("stroke-dashoffset", String(offset));
+  svg.appendChild(frente);
+
+  const texto = document.createElementNS(svgNs, "text");
+  texto.setAttribute("x", "36"); texto.setAttribute("y", "41");
+  texto.setAttribute("class", "anel-texto");
+  texto.textContent = String(Math.round(percentual));
+  svg.appendChild(texto);
+
+  const wrapper = el("div", { class: "anel-wrapper" });
+  wrapper.appendChild(svg);
+  return wrapper;
+}
+
+function renderizarMeta(container, m) {
+  container.innerHTML = "";
+  if (!m.metaDefinida) {
+    container.appendChild(el("span", { class: "meta-rotulo", texto: "Meta de poupança" }));
+    container.appendChild(el("p", { class: "texto-fraco", texto: "nenhuma meta definida ainda." }));
+    return;
+  }
+  const percentual = Math.max(0, Math.min(100, m.aderenciaPercentual ?? 0));
+  const corClasse = m.noCaminho ? "" : (percentual >= 50 ? "atencao" : "estourado");
+
+  container.appendChild(el("div", { class: "meta-topo" }, [
+    el("span", { class: "meta-rotulo", texto: "Meta de poupança" }),
+    el("span", { class: `meta-status ${m.noCaminho ? "no-caminho" : "fora-caminho"}`,
+      texto: m.noCaminho ? "no caminho" : "fora do caminho" }),
+  ]));
+  container.appendChild(el("div", { class: "barra-fundo meta-barra" }, [
+    el("div", { class: `barra-preenchimento ${corClasse}`, style: `width:${percentual}%` }),
+  ]));
+  container.appendChild(el("div", { class: "meta-numeros" }, [
+    el("span", { texto: `poupança projetada: ${formatarMoeda(m.poupancaProjetada)}` }),
+    el("span", { class: "texto-fraco", texto: `meta: ${formatarMoeda(m.metaDefinida)}` }),
+  ]));
+  container.appendChild(el("div", { class: "meta-numeros" }, [
+    el("span", { class: "texto-fraco", texto: `receita esperada: ${formatarMoeda(m.receitaEsperada)}` }),
+    el("span", { class: "texto-fraco", texto: `despesa projetada: ${formatarMoeda(m.despesaProjetada)}` }),
+  ]));
 }
 
 function preencherSelectCategorias() {

@@ -58,15 +58,14 @@
     </section>
 
     <section id="tab-painel" class="aba" hidden>
-      <div class="seletor-mes cartao">
-        <button id="painel-mes-anterior" class="botao-icone">‹</button>
-        <span id="painel-mes-rotulo">—</span>
-        <button id="painel-mes-seguinte" class="botao-icone">›</button>
+      <div id="score-cartao" class="cartao score-cartao"></div>
+
+      <div id="meta-cartao" class="cartao meta-cartao"></div>
+
+      <div class="painel-bloco-titulo">
+        <span>Orçamentos</span>
+        <span id="painel-ciclo-rotulo" class="painel-bloco-subtitulo">—</span>
       </div>
-
-      <div id="saude-cartao" class="cartao saude-cartao"></div>
-
-      <div class="painel-bloco-titulo">Orçamentos</div>
       <div id="orcamentos-lista"></div>
       <form id="form-orcamento" class="cartao form-orcamento">
         <select id="orcamento-categoria"></select>
@@ -74,7 +73,12 @@
         <button type="submit">Definir</button>
       </form>
 
-      <div class="painel-bloco-titulo">Investimentos</div>
+      <details class="painel-detalhes">
+        <summary>Indicadores gerais</summary>
+        <div id="saude-cartao" class="cartao saude-cartao"></div>
+      </details>
+
+      <div class="painel-bloco-titulo"><span>Investimentos</span></div>
       <div id="investimentos-lista"></div>
     </section>
 

@@ -140,6 +140,35 @@ class TestServidor(unittest.TestCase):
         self.assertIn("pontuacao", corpo)
         self.assertIn("classificacao", corpo)
 
+    def test_score(self):
+        r = self.cliente.get("/api/score", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        corpo = r.get_json()
+        self.assertIn("pontuacaoFinal", corpo)
+        self.assertIn("classificacao", corpo)
+        self.assertIn("poupanca", corpo)
+        self.assertIn("categoriasEmRiscoDeEstourar", corpo)
+
+    def test_meta_definir_e_consultar(self):
+        r = self.cliente.get("/api/meta", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.get_json()["metaDefinida"])
+
+        r = self.cliente.post("/api/meta", json={"valor": 1500.0}, headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+
+        r = self.cliente.get("/api/meta", headers=self.auth)
+        corpo = r.get_json()
+        self.assertEqual(corpo["metaDefinida"], 1500.0)
+        self.assertIn("poupancaProjetada", corpo)
+        self.assertIn("aderenciaPercentual", corpo)
+
+    def test_meta_valor_invalido_da_400(self):
+        r = self.cliente.post("/api/meta", json={"valor": "abc"}, headers=self.auth)
+        self.assertEqual(r.status_code, 400)
+        r = self.cliente.post("/api/meta", json={"valor": -5}, headers=self.auth)
+        self.assertEqual(r.status_code, 400)
+
     def test_orcamentos_definir_listar_e_remover(self):
         r = self.cliente.post("/api/orcamentos", json={"categoria": "Mercado", "limite": 800}, headers=self.auth)
         self.assertEqual(r.status_code, 200)
