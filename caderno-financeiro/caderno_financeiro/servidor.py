@@ -18,7 +18,7 @@ from flask import Flask, Response, g, jsonify, request, send_from_directory
 
 from . import auth, config, consulta, db, estatisticas, exportador, ia, registro
 from .calculadora import executar_calculo
-from .datas import mes_atual, validar_mes
+from .datas import ciclo_por_rotulo, rotulo_ciclo_atual, validar_mes
 
 DIRETORIO_PWA = Path(__file__).resolve().parent.parent / "web"
 
@@ -101,7 +101,7 @@ def criar_app() -> Flask:
     @app.get("/api/resumo")
     def _resumo():
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else mes_atual()
+        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
         lancamentos = db.listar(_conexao())
         return jsonify(estatisticas.resumo_mensal(lancamentos, mes))
 
@@ -109,10 +109,11 @@ def criar_app() -> Flask:
     def _listar():
         conexao = _conexao()
         mes = request.args.get("mes")
+        inicio, fim = ciclo_por_rotulo(validar_mes(mes)) if mes else (None, None)
         lancamentos = db.listar(
             conexao,
-            mes_inicio=validar_mes(mes) if mes else None,
-            mes_fim=validar_mes(mes) if mes else None,
+            data_inicio=inicio,
+            data_fim=fim,
             tipo=request.args.get("tipo") or None,
             categoria=request.args.get("categoria") or None,
             forma_pagamento=request.args.get("forma") or None,
@@ -154,14 +155,14 @@ def criar_app() -> Flask:
     @app.get("/api/saude")
     def _saude():
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else mes_atual()
+        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
         return jsonify(estatisticas.saude_financeira(db.listar(_conexao()), mes))
 
     @app.get("/api/orcamentos")
     def _listar_orcamentos():
         conexao = _conexao()
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else mes_atual()
+        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
         progresso = estatisticas.progresso_orcamentos(db.listar(conexao), db.listar_orcamentos(conexao), mes)
         return jsonify(progresso)
 

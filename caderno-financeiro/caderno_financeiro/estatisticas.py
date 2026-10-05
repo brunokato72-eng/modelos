@@ -16,6 +16,7 @@ from .datas import (
     ciclo_atual,
     ciclo_de,
     ciclo_por_rotulo,
+    ciclo_seguinte,
     dias_entre,
     hoje_iso,
     mes_anterior,
@@ -35,15 +36,18 @@ def _quebra(lancamentos: Sequence[Dict[str, Any]], campo: str, tipo: str) -> Lis
 
 def resumo_mensal(
     lancamentos: Sequence[Dict[str, Any]],
-    mes: Optional[str] = None,
+    rotulo: Optional[str] = None,
     *,
     incluir_comparacao: bool = True,
 ) -> Dict[str, Any]:
-    mes = mes or mes_atual()
-    do_mes = [e for e in lancamentos if (e.get("data") or "")[:7] == mes]
+    """Resumo do ciclo de fatura (fecha dia 27) cujo rótulo (AAAA-MM do
+    fechamento) é `rotulo` — padrão é o ciclo corrente."""
+    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    mes = rotulo_ciclo(fim)
+    do_ciclo = [e for e in lancamentos if inicio <= (e.get("data") or "") <= fim]
 
-    despesas = [e for e in do_mes if e.get("tipo") == config.TIPO_DESPESA]
-    receitas = [e for e in do_mes if e.get("tipo") == config.TIPO_RECEITA]
+    despesas = [e for e in do_ciclo if e.get("tipo") == config.TIPO_DESPESA]
+    receitas = [e for e in do_ciclo if e.get("tipo") == config.TIPO_RECEITA]
     total_despesas = sum(para_centavos(e.get("valor") or 0) for e in despesas)
     total_receitas = sum(para_centavos(e.get("valor") or 0) for e in receitas)
 
@@ -52,13 +56,13 @@ def resumo_mensal(
         "totalDespesas": para_reais(total_despesas),
         "totalReceitas": para_reais(total_receitas),
         "saldo": para_reais(total_receitas - total_despesas),
-        "quantidadeLancamentos": len(do_mes),
+        "quantidadeLancamentos": len(do_ciclo),
         "quantidadeDespesas": len(despesas),
         "ticketMedioDespesa": para_reais(round(total_despesas / len(despesas))) if despesas else 0.0,
-        "porCategoria": _quebra(do_mes, "categoria", config.TIPO_DESPESA),
-        "porFormaPagamento": _quebra(do_mes, "formapagamento", config.TIPO_DESPESA),
-        "porConta": _quebra(do_mes, "conta", config.TIPO_DESPESA),
-        "receitasPorCategoria": _quebra(do_mes, "categoria", config.TIPO_RECEITA),
+        "porCategoria": _quebra(do_ciclo, "categoria", config.TIPO_DESPESA),
+        "porFormaPagamento": _quebra(do_ciclo, "formapagamento", config.TIPO_DESPESA),
+        "porConta": _quebra(do_ciclo, "conta", config.TIPO_DESPESA),
+        "receitasPorCategoria": _quebra(do_ciclo, "categoria", config.TIPO_RECEITA),
         "comprometidoParcelas": para_reais(
             sum(
                 para_centavos(e.get("valor") or 0)
@@ -69,17 +73,17 @@ def resumo_mensal(
     }
 
     if incluir_comparacao:
-        anterior = mes_anterior(mes)
+        inicio_ant, fim_ant = ciclo_anterior(inicio)
         despesas_anteriores = sum(
             para_centavos(e.get("valor") or 0)
             for e in lancamentos
-            if (e.get("data") or "")[:7] == anterior and e.get("tipo") == config.TIPO_DESPESA
+            if inicio_ant <= (e.get("data") or "") <= fim_ant and e.get("tipo") == config.TIPO_DESPESA
         )
         variacao = None
         if despesas_anteriores:
             variacao = round((total_despesas - despesas_anteriores) / despesas_anteriores * 100, 1)
         resumo["mesAnterior"] = {
-            "mes": anterior,
+            "mes": rotulo_ciclo(fim_ant),
             "totalDespesas": para_reais(despesas_anteriores),
             "variacaoPercentual": variacao,
             "diferenca": para_reais(total_despesas - despesas_anteriores),
@@ -88,23 +92,21 @@ def resumo_mensal(
     return resumo
 
 
-def parcelas_futuras(lancamentos: Sequence[Dict[str, Any]], mes_referencia: Optional[str] = None,
+def parcelas_futuras(lancamentos: Sequence[Dict[str, Any]], rotulo_referencia: Optional[str] = None,
                      meses: int = 6) -> List[Dict[str, Any]]:
-    """Quanto já está comprometido nos próximos meses por conta de parcelamentos."""
-    from .datas import somar_meses
-
-    mes_referencia = mes_referencia or mes_atual()
+    """Quanto já está comprometido nos próximos ciclos por conta de parcelamentos."""
+    _, fim = ciclo_por_rotulo(rotulo_referencia) if rotulo_referencia else ciclo_atual()
     saida = []
-    for passo in range(1, meses + 1):
-        alvo = somar_meses(f"{mes_referencia}-01", passo)[:7]
+    for _ in range(meses):
+        inicio_alvo, fim = ciclo_seguinte(fim)
         total = sum(
             para_centavos(e.get("valor") or 0)
             for e in lancamentos
-            if (e.get("data") or "")[:7] == alvo
+            if inicio_alvo <= (e.get("data") or "") <= fim
             and e.get("tipo") == config.TIPO_DESPESA
             and (e.get("totalParcelas") or 1) > 1
         )
-        saida.append({"mes": alvo, "totalParcelas": para_reais(total)})
+        saida.append({"mes": rotulo_ciclo(fim), "totalParcelas": para_reais(total)})
     return saida
 
 
@@ -143,22 +145,22 @@ def progresso_orcamentos(
 # desconta por sinais concretos (poupança baixa/negativa, despesas subindo,
 # parcelas futuras pesando demais na receita). É uma régua simples, não um
 # veredito: os `alertas` explicam exatamente de onde veio cada desconto.
-def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] = None) -> Dict[str, Any]:
-    from .datas import somar_meses
-
-    mes = mes or mes_atual()
+def saude_financeira(lancamentos: Sequence[Dict[str, Any]], rotulo: Optional[str] = None) -> Dict[str, Any]:
+    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    mes = rotulo_ciclo(fim)
     resumo = resumo_mensal(lancamentos, mes, incluir_comparacao=False)
     receitas, despesas = resumo["totalReceitas"], resumo["totalDespesas"]
 
     taxa_poupanca = round(resumo["saldo"] / receitas * 100, 1) if receitas else None
 
     totais_meses_anteriores = []
-    for passo in range(1, 4):
-        alvo = somar_meses(f"{mes}-01", -passo)[:7]
+    inicio_alvo = inicio
+    for _ in range(3):
+        inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
             for e in lancamentos
-            if (e.get("data") or "")[:7] == alvo and e.get("tipo") == config.TIPO_DESPESA
+            if inicio_alvo <= (e.get("data") or "") <= fim_alvo and e.get("tipo") == config.TIPO_DESPESA
         )
         if total:
             totais_meses_anteriores.append(total)

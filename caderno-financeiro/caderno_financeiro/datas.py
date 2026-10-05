@@ -104,6 +104,10 @@ def ciclo_anterior(inicio_iso: str) -> tuple[str, str]:
     return ciclo_de(somar_dias(inicio_iso, -1))
 
 
+def ciclo_seguinte(fim_iso: str) -> tuple[str, str]:
+    return ciclo_de(somar_dias(fim_iso, 1))
+
+
 def rotulo_ciclo(fim_iso: str) -> str:
     """AAAA-MM do fechamento — como o usuário chamaria o ciclo (\"ciclo de outubro\")."""
     return fim_iso[:7]
@@ -114,3 +118,8 @@ def ciclo_por_rotulo(rotulo: str) -> tuple[str, str]:
     fim = f"{rotulo}-{config.DIA_FECHAMENTO_CICLO:02d}"
     inicio = somar_dias(somar_meses(fim, -1), 1)
     return inicio, fim
+
+
+def rotulo_ciclo_atual() -> str:
+    """Atalho pro rótulo do ciclo corrente — o "mês" padrão em todo o app."""
+    return rotulo_ciclo(ciclo_atual()[1])

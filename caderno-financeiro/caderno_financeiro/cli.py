@@ -13,7 +13,7 @@ from . import pluggy_cliente as pc
 from . import pluggy_sync
 from . import upx_sync
 from .calculadora import OPERACOES, executar_calculo
-from .datas import ciclo_atual, mes_atual, rotulo_ciclo, validar_mes
+from .datas import ciclo_atual, ciclo_por_rotulo, mes_atual, rotulo_ciclo, rotulo_ciclo_atual, validar_mes
 from .valores import formatar
 
 VERDE = "\033[32m"
@@ -140,7 +140,7 @@ def cmd_registrar(args) -> int:
 
 
 def cmd_resumo(args) -> int:
-    mes = validar_mes(args.mes) if args.mes else mes_atual()
+    mes = validar_mes(args.mes) if args.mes else rotulo_ciclo_atual()
     with db.banco(args.banco) as conexao:
         lancamentos = db.listar(conexao)
     resumo = estatisticas.resumo_mensal(lancamentos, mes)
@@ -191,11 +191,12 @@ def cmd_resumo(args) -> int:
 
 
 def cmd_listar(args) -> int:
+    inicio, fim = ciclo_por_rotulo(validar_mes(args.mes)) if args.mes else (None, None)
     with db.banco(args.banco) as conexao:
         lancamentos = db.listar(
             conexao,
-            mes_inicio=validar_mes(args.mes) if args.mes else None,
-            mes_fim=validar_mes(args.mes) if args.mes else None,
+            data_inicio=inicio,
+            data_fim=fim,
             tipo=args.tipo,
             categoria=args.categoria,
             forma_pagamento=args.forma,
@@ -577,7 +578,7 @@ def cmd_orcamento(args) -> int:
         orcamentos = db.listar_orcamentos(conexao)
         lancamentos = db.listar(conexao)
 
-    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo(ciclo_atual()[1])
+    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo_atual()
     progresso = estatisticas.progresso_orcamentos(lancamentos, orcamentos, rotulo)
     if args.json:
         imprimir_json(progresso)
@@ -596,7 +597,7 @@ def cmd_orcamento(args) -> int:
 
 
 def cmd_saude(args) -> int:
-    mes = validar_mes(args.mes) if args.mes else mes_atual()
+    mes = validar_mes(args.mes) if args.mes else rotulo_ciclo_atual()
     with db.banco(args.banco) as conexao:
         lancamentos = db.listar(conexao)
     resultado = estatisticas.saude_financeira(lancamentos, mes)
@@ -635,7 +636,7 @@ def cmd_meta(args) -> int:
         lancamentos = db.listar(conexao)
 
     meta_valor = float(meta_texto) if meta_texto else None
-    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo(ciclo_atual()[1])
+    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo_atual()
     resultado = estatisticas.projecao_poupanca(lancamentos, rotulo, meta_valor)
     if args.json:
         imprimir_json(resultado)

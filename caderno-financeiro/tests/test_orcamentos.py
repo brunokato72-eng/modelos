@@ -100,7 +100,7 @@ class TestProgressoOrcamentos(unittest.TestCase):
 class TestSaudeFinanceira(unittest.TestCase):
     def test_sem_receita_penaliza_e_avisa(self):
         lancamentos = [lancamento(data="2026-08-05", valor=100.0)]
-        resultado = saude_financeira(lancamentos, mes="2026-08")
+        resultado = saude_financeira(lancamentos, rotulo="2026-08")
         self.assertIsNone(resultado["taxaPoupanca"])
         self.assertLess(resultado["pontuacao"], 100)
         self.assertTrue(any("receita" in a for a in resultado["alertas"]))
@@ -114,8 +114,8 @@ class TestSaudeFinanceira(unittest.TestCase):
             lancamento(tipo="Receita", categoria="Salário", valor=1000.0, data="2026-08-01"),
             lancamento(tipo="Despesa", valor=950.0, data="2026-08-05"),
         ]
-        resultado_negativo = saude_financeira(gastando_mais_que_ganha, mes="2026-08")
-        resultado_positivo = saude_financeira(poupando_pouco, mes="2026-08")
+        resultado_negativo = saude_financeira(gastando_mais_que_ganha, rotulo="2026-08")
+        resultado_positivo = saude_financeira(poupando_pouco, rotulo="2026-08")
         self.assertLess(resultado_negativo["pontuacao"], resultado_positivo["pontuacao"])
         self.assertEqual(resultado_negativo["pontuacao"], 60)
         self.assertEqual(resultado_negativo["classificacao"], "atenção")
@@ -125,7 +125,7 @@ class TestSaudeFinanceira(unittest.TestCase):
             lancamento(tipo="Receita", categoria="Salário", valor=5000.0, data="2026-08-01"),
             lancamento(tipo="Despesa", valor=1000.0, data="2026-08-05"),
         ]
-        resultado = saude_financeira(lancamentos, mes="2026-08")
+        resultado = saude_financeira(lancamentos, rotulo="2026-08")
         self.assertEqual(resultado["pontuacao"], 100)
         self.assertEqual(resultado["classificacao"], "boa")
         self.assertEqual(resultado["alertas"], [])
@@ -137,7 +137,7 @@ class TestSaudeFinanceira(unittest.TestCase):
             lancamento(tipo="Despesa", valor=1000.0, data="2026-07-05"),
             lancamento(tipo="Despesa", valor=1000.0, data="2026-06-05"),
         ]
-        resultado = saude_financeira(lancamentos, mes="2026-08")
+        resultado = saude_financeira(lancamentos, rotulo="2026-08")
         self.assertEqual(resultado["tendenciaDespesas"], "subindo")
         self.assertTrue(any("subindo" in a for a in resultado["alertas"]))
 
@@ -147,7 +147,7 @@ class TestSaudeFinanceira(unittest.TestCase):
             lancamento(tipo="Despesa", valor=500.0, data="2026-09-05", totalParcelas=6, parcelaAtual=2),
             lancamento(tipo="Despesa", valor=500.0, data="2026-10-05", totalParcelas=6, parcelaAtual=3),
         ]
-        resultado = saude_financeira(lancamentos, mes="2026-08")
+        resultado = saude_financeira(lancamentos, rotulo="2026-08")
         self.assertIsNotNone(resultado["comprometimentoFuturoPercentual"])
         self.assertGreater(resultado["comprometimentoFuturoPercentual"], 30)
         self.assertTrue(any("comprometem" in a for a in resultado["alertas"]))

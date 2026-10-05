@@ -242,12 +242,17 @@ def listar(
     *,
     mes_inicio: Optional[str] = None,
     mes_fim: Optional[str] = None,
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
     tipo: Optional[str] = None,
     categoria: Optional[str] = None,
     forma_pagamento: Optional[str] = None,
     conta: Optional[str] = None,
     limite: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """`mes_inicio`/`mes_fim` filtram por prefixo AAAA-MM (mês calendário);
+    `data_inicio`/`data_fim` filtram por data exata AAAA-MM-DD — usado pro
+    ciclo de fatura, que não alinha com início/fim de mês."""
     clausulas, parametros = [], []
     if mes_inicio:
         clausulas.append("substr(data, 1, 7) >= ?")
@@ -255,6 +260,12 @@ def listar(
     if mes_fim:
         clausulas.append("substr(data, 1, 7) <= ?")
         parametros.append(mes_fim)
+    if data_inicio:
+        clausulas.append("data >= ?")
+        parametros.append(data_inicio)
+    if data_fim:
+        clausulas.append("data <= ?")
+        parametros.append(data_fim)
     if tipo:
         clausulas.append("tipo = ?")
         parametros.append(tipo)
