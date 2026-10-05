@@ -201,15 +201,6 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] =
 # skins de jogo, assinaturas via checkout de terceiro cobradas na fatura da Apple).
 GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 
-# Nos primeiros dias do mês, gasto/dia_atual*dias_totais explode qualquer
-# transação isolada (R$959 num único dia 1 vira "projeção de R$29.739"). Até
-# completar essa quantidade de dias, a projeção pelo ritmo é misturada com a
-# média histórica da categoria (quanto menos dias, mais peso pra média) — é um
-# shrinkage simples, não regressão de verdade, só pra não disparar alerta
-# bobo por falta de amostra.
-MIN_DIAS_PROJECAO = 5
-
-
 def _media_historica_despesa_centavos(
     lancamentos: Sequence[Dict[str, Any]], mes: str, categoria: Optional[str] = None
 ) -> Optional[int]:
@@ -230,10 +221,20 @@ def _media_historica_despesa_centavos(
     return round(sum(totais) / len(totais)) if totais else None
 
 
-def _projetar_com_shrinkage(ritmo_centavos: int, dia_atual: int, media_historica_centavos: Optional[int]) -> int:
-    if dia_atual >= MIN_DIAS_PROJECAO or media_historica_centavos is None:
+# gasto/dia_atual*dias_totais assume ritmo constante — funciona pra gasto do
+# dia a dia (mercado, transporte), mas explode qualquer categoria concentrada
+# num pagamento só (aluguel pago 1x, parcela de data fixa): no dia 5, pagar o
+# aluguel inteiro e extrapolar como se fosse 1/5 de um gasto diário recorrente
+# virava "vai gastar aluguel 6x no mês". Por isso o peso do ritmo sobe
+# gradualmente com a fração do mês já decorrida (dia 5 de 31 = 16% ritmo, 84%
+# média histórica); só no fim do mês o ritmo pesa 100% — ponto em que ritmo e
+# total real já coincidem de qualquer forma. Shrinkage simples, não regressão.
+def _projetar_com_shrinkage(
+    ritmo_centavos: int, dia_atual: int, dias_totais: int, media_historica_centavos: Optional[int]
+) -> int:
+    if media_historica_centavos is None:
         return ritmo_centavos
-    peso = dia_atual / MIN_DIAS_PROJECAO
+    peso = dia_atual / dias_totais
     return round(peso * ritmo_centavos + (1 - peso) * media_historica_centavos)
 
 
@@ -313,7 +314,7 @@ def projecao_categoria(
         round(gasto_ate_hoje_centavos / dia_atual * dias_totais) if dia_atual else gasto_ate_hoje_centavos
     )
     media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes, categoria)
-    projecao_ritmo_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, media_historica_centavos)
+    projecao_ritmo_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, dias_totais, media_historica_centavos)
     # a projeção nunca fica abaixo do que já é certo (parcelas futuras já cadastradas)
     projecao_centavos = max(projecao_ritmo_centavos, gasto_total_conhecido_centavos)
     limite_centavos = para_centavos(limite) if limite else None
@@ -369,7 +370,7 @@ def projecao_poupanca(
     )
     media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes)
     despesa_projetada_ritmo_centavos = _projetar_com_shrinkage(
-        ritmo_despesa_centavos, dia_atual, media_historica_centavos
+        ritmo_despesa_centavos, dia_atual, dias_totais, media_historica_centavos
     )
     # nunca abaixo do que já é certo (parcelas futuras já cadastradas no mês)
     despesa_projetada_centavos = max(despesa_projetada_ritmo_centavos, despesas_total_conhecido_centavos)

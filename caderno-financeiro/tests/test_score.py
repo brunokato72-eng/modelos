@@ -69,13 +69,24 @@ class TestProjecaoComPoucosDias(unittest.TestCase):
         self.assertFalse(resultado["vaiEstourar"])
 
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-05")
-    def test_a_partir_do_dia_minimo_usa_so_o_ritmo(self, _hoje):
+    def test_peso_do_ritmo_cresce_com_a_fracao_do_mes_decorrida(self, _hoje):
         lancamentos = [
             _lanc("2026-09-10", 500, "Compras"),
             _lanc("2026-10-05", 500, "Compras"),
         ]
         resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
-        # dia 5 == MIN_DIAS_PROJECAO -> ritmo puro: 500/5*31 = 3100
+        # ritmo puro seria 500/5*31=3100; com peso 5/31 (~16%) misturado com a
+        # média histórica (500), a projeção fica bem mais próxima da média
+        self.assertAlmostEqual(resultado["projecao"], 919.35, delta=1.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-10-31")
+    def test_fim_do_mes_ritmo_e_total_real_coincidem(self, _hoje):
+        lancamentos = [
+            _lanc("2026-09-10", 500, "Compras"),
+            _lanc("2026-10-31", 3100, "Compras"),
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-10")
+        # último dia do mês: peso do ritmo é 100%, projeção = total real do mês
         self.assertEqual(resultado["projecao"], 3100.0)
 
 
