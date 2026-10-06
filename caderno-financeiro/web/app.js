@@ -457,7 +457,7 @@ async function carregarFuturo() {
       texto: formatarMoeda(ultimo.acumulado),
     }));
     resumoContainer.appendChild(el("p", { class: "texto-fraco",
-      texto: "receita esperada menos só o que já é certo (parcelas) — não assume gasto do orçamento inteiro." }));
+      texto: "receita esperada menos parcelas já certas e o gasto recorrente típico (média histórica) — não é o orçamento inteiro, é o que você costuma gastar de verdade." }));
 
     listaContainer.innerHTML = "";
     dados.forEach((item) => {
@@ -469,7 +469,8 @@ async function carregarFuturo() {
         ]),
         el("div", { class: "futuro-detalhe texto-fraco" }, [
           el("span", { texto: `receita esperada ${formatarMoeda(item.receitaEsperada)}` }),
-          el("span", { texto: `parcelas certas ${formatarMoeda(item.parcelasComprometidas)}` }),
+          el("span", { texto: `gasto recorrente ${formatarMoeda(item.gastoRecorrenteEsperado)}` }),
+          el("span", { texto: `parcelas certas ${formatarMoeda(item.compromissosCertos)}` }),
         ]),
         el("div", { class: "futuro-acumulado-linha texto-fraco" }, [
           el("span", { texto: `acumulado: ${formatarMoeda(item.acumulado)}` }),

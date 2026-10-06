@@ -217,12 +217,18 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], rotulo: Optional[str
 GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 
 def _media_historica_despesa_centavos(
-    lancamentos: Sequence[Dict[str, Any]], inicio: str, categoria: Optional[str] = None
+    lancamentos: Sequence[Dict[str, Any]], inicio: str, categoria: Optional[str] = None,
+    *, excluir_compromissos_certos: bool = False,
 ) -> Optional[int]:
     """Média dos últimos 3 ciclos de fatura ANTERIORES a `inicio` que tiveram
     gasto de verdade — pula ciclos vazios (relevante ao encadear vários ciclos
     futuros, onde os mais próximos ainda não têm nenhum lançamento real) em
-    vez de parar nos 3 primeiros e arriscar não achar nenhum dado."""
+    vez de parar nos 3 primeiros e arriscar não achar nenhum dado.
+
+    `excluir_compromissos_certos=True` tira parcelas e "Dívidas" da média —
+    usado em `projecao_compromissos_futuros`, que já soma esses compromissos
+    certos de cada ciclo futuro à parte; sem isso, um valor entraria na média
+    E de novo como "certo" do ciclo futuro, contando duas vezes."""
     totais = []
     inicio_alvo = inicio
     for _ in range(12):
@@ -236,6 +242,7 @@ def _media_historica_despesa_centavos(
             and e.get("tipo") == config.TIPO_DESPESA
             and e.get("categoria") != CATEGORIA_NEGOCIO
             and (categoria is None or e.get("categoria") == categoria)
+            and not (excluir_compromissos_certos and _eh_compromisso_certo(e))
         )
         if total:
             totais.append(total)
@@ -264,6 +271,18 @@ def _projetar_com_shrinkage(
 # aporte pontual de milhares de reais faz o score ficar sempre crítico até o
 # capex terminar, o que não diz nada sobre o comportamento do usuário.
 CATEGORIA_NEGOCIO = "Negócio"
+
+# "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
+# (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
+# próximos meses, sem usar o mecanismo de parcela do app) — pra efeito de
+# "o que já é certo" conta junto com parcela de verdade, não como gasto
+# recorrente estimado (senão esse valor entra duas vezes: uma na média
+# histórica, outra como compromisso certo do ciclo futuro específico).
+CATEGORIA_DIVIDAS = "Dívidas"
+
+
+def _eh_compromisso_certo(lancamento: Dict[str, Any]) -> bool:
+    return (lancamento.get("totalParcelas") or 1) > 1 or lancamento.get("categoria") == CATEGORIA_DIVIDAS
 
 
 def _dia_de_referencia(inicio: str, fim: str) -> tuple[str, int, int]:
@@ -506,32 +525,41 @@ def projecao_compromissos_futuros(
     rotulo_referencia: Optional[str] = None,
     meses: int = 6,
 ) -> List[Dict[str, Any]]:
-    """Quanto deve sobrar em cada um dos próximos ciclos, de forma conservadora:
-    só receita esperada menos o que já é CERTO (parcelas já cadastradas) — não
-    assume que o orçamento planejado vai ser gasto por inteiro. `acumulado` é a
-    reserva esperada somando os ciclos um a um."""
+    """Quanto deve sobrar em cada um dos próximos ciclos: receita esperada menos
+    o que já é CERTO (parcelas cadastradas + "Dívidas", que na prática é
+    financiamento com cronograma já conhecido) menos o gasto recorrente típico
+    (média histórica do que não é compromisso certo — mercado, transporte,
+    etc.) — não é nem só os compromissos certos (ignora o resto do gasto
+    normal) nem o orçamento cheio (assume disciplina perfeita), é o que você
+    realmente costuma gastar. `acumulado` é a reserva esperada somando os
+    ciclos um a um."""
     _, fim = ciclo_por_rotulo(rotulo_referencia) if rotulo_referencia else ciclo_atual()
     saida = []
     acumulado = 0.0
     for _ in range(meses):
         inicio_alvo, fim = ciclo_seguinte(fim)
-        parcelas_centavos = sum(
+        compromissos_certos_centavos = sum(
             para_centavos(e.get("valor") or 0)
             for e in lancamentos
             if inicio_alvo <= (e.get("data") or "") <= fim
             and e.get("tipo") == config.TIPO_DESPESA
-            and (e.get("totalParcelas") or 1) > 1
+            and _eh_compromisso_certo(e)
         )
-        parcelas_comprometidas = para_reais(parcelas_centavos)
+        compromissos_certos = para_reais(compromissos_certos_centavos)
+        gasto_recorrente_centavos = _media_historica_despesa_centavos(
+            lancamentos, inicio_alvo, excluir_compromissos_certos=True
+        ) or 0
+        gasto_recorrente = para_reais(gasto_recorrente_centavos)
         receita_esperada = _receita_esperada_ciclo(lancamentos, inicio_alvo)
-        saldo_esperado = round(receita_esperada - parcelas_comprometidas, 2)
+        saldo_esperado = round(receita_esperada - compromissos_certos - gasto_recorrente, 2)
         acumulado = round(acumulado + saldo_esperado, 2)
         saida.append({
             "ciclo": rotulo_ciclo(fim),
             "inicio": inicio_alvo,
             "fim": fim,
             "receitaEsperada": receita_esperada,
-            "parcelasComprometidas": parcelas_comprometidas,
+            "gastoRecorrenteEsperado": gasto_recorrente,
+            "compromissosCertos": compromissos_certos,
             "saldoEsperado": saldo_esperado,
             "acumulado": acumulado,
         })

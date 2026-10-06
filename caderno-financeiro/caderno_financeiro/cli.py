@@ -659,11 +659,12 @@ def cmd_futuro(args) -> int:
         imprimir_json(resultado)
         return 0
 
-    print(pintar("\nCompromissos futuros (receita esperada − parcelas já certas)", NEGRITO))
+    print(pintar("\nCompromissos futuros (receita esperada − gasto recorrente típico − parcelas já certas)", NEGRITO))
     for item in resultado:
         cor = VERDE if item["saldoEsperado"] >= 0 else VERMELHO
         print(f"  {item['ciclo']}  receita {formatar(item['receitaEsperada']):>12}   "
-              f"parcelas {formatar(item['parcelasComprometidas']):>10}   "
+              f"recorrente {formatar(item['gastoRecorrenteEsperado']):>10}   "
+              f"parcelas {formatar(item['compromissosCertos']):>10}   "
               f"saldo {pintar(formatar(item['saldoEsperado']), cor):>12}   "
               f"acumulado {formatar(item['acumulado']):>12}")
     print()

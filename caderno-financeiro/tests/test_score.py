@@ -203,9 +203,42 @@ class TestProjecaoCompromissosFuturos(unittest.TestCase):
         primeiro = resultado[0]
         self.assertEqual(primeiro["ciclo"], "2026-10")
         self.assertEqual(primeiro["receitaEsperada"], 5000.0)
-        self.assertEqual(primeiro["parcelasComprometidas"], 300.0)
+        self.assertEqual(primeiro["compromissosCertos"], 300.0)
         self.assertEqual(primeiro["saldoEsperado"], 4700.0)
         self.assertEqual(primeiro["acumulado"], 4700.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_desconta_gasto_recorrente_tipico_alem_das_parcelas(self, _hoje):
+        lancamentos = [
+            _lanc("2026-06-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-07-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            # gasto recorrente (não-parcelado) repetido nos 3 ciclos anteriores
+            _lanc("2026-06-10", 800, "Mercado"),
+            _lanc("2026-07-10", 800, "Mercado"),
+            _lanc("2026-08-10", 800, "Mercado"),
+        ]
+        resultado = estatisticas.projecao_compromissos_futuros(lancamentos, "2026-09", meses=1)
+        self.assertEqual(resultado[0]["gastoRecorrenteEsperado"], 800.0)
+        self.assertEqual(resultado[0]["saldoEsperado"], 5000.0 - 800.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_parcela_nao_entra_duas_vezes_no_gasto_recorrente(self, _hoje):
+        lancamentos = [
+            _lanc("2026-06-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-07-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+        ]
+        # mesma parcela recorrendo nos 3 ciclos anteriores E no próximo ciclo
+        for data in ("2026-06-10", "2026-07-10", "2026-08-10", "2026-10-01"):
+            parcela = _lanc(data, 300, "Compras")
+            parcela["totalParcelas"] = 4
+            lancamentos.append(parcela)
+        resultado = estatisticas.projecao_compromissos_futuros(lancamentos, "2026-09", meses=1)
+        # se contasse nos dois (recorrente E parcela certa), o desconto seria 600
+        self.assertEqual(resultado[0]["gastoRecorrenteEsperado"], 0.0)
+        self.assertEqual(resultado[0]["compromissosCertos"], 300.0)
+        self.assertEqual(resultado[0]["saldoEsperado"], 5000.0 - 300.0)
 
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_acumulado_soma_ciclo_a_ciclo(self, _hoje):
