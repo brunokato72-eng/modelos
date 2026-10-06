@@ -150,6 +150,79 @@ class TestProjecaoPoupanca(unittest.TestCase):
         self.assertFalse(resultado_apertado["noCaminho"])
 
 
+class TestDre(unittest.TestCase):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_realizado_soma_por_categoria_e_calcula_margem(self, _hoje):
+        orcamentos = []
+        lancamentos = [
+            _lanc("2026-09-01", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-05", 1000, "Mercado"),
+            _lanc("2026-09-06", 500, "Lazer"),
+        ]
+        resultado = estatisticas.dre(lancamentos, orcamentos, "2026-09")
+        self.assertEqual(resultado["ciclo"], "2026-09")
+        self.assertEqual(resultado["realizado"]["receitaBruta"], 5000.0)
+        self.assertEqual(resultado["realizado"]["totalDespesas"], 1500.0)
+        self.assertEqual(resultado["realizado"]["resultadoLiquido"], 3500.0)
+        self.assertEqual(resultado["realizado"]["margemPercentual"], 70.0)
+        categorias = {c["categoria"]: c["valor"] for c in resultado["realizado"]["despesasPorCategoria"]}
+        self.assertEqual(categorias, {"Mercado": 1000.0, "Lazer": 500.0})
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_capex_fica_de_fora_do_resultado_operacional(self, _hoje):
+        orcamentos = []
+        lancamentos = [
+            _lanc("2026-09-01", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-05", 1000, "Mercado"),
+            _lanc("2026-09-06", 10000, "Negócio"),
+        ]
+        resultado = estatisticas.dre(lancamentos, orcamentos, "2026-09")
+        self.assertEqual(resultado["capex"], 10000.0)
+        self.assertEqual(resultado["realizado"]["totalDespesas"], 1000.0)
+        self.assertNotIn("Negócio", [c["categoria"] for c in resultado["realizado"]["despesasPorCategoria"]])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_sem_receita_margem_fica_none(self, _hoje):
+        resultado = estatisticas.dre([_lanc("2026-09-05", 100, "Mercado")], [], "2026-09")
+        self.assertIsNone(resultado["realizado"]["margemPercentual"])
+
+
+class TestProjecaoCompromissosFuturos(unittest.TestCase):
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_usa_parcelas_certas_e_receita_esperada_sem_assumir_orcamento_inteiro(self, _hoje):
+        lancamentos = [
+            _lanc("2026-06-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-07-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            # parcela 2/3 cai no próximo ciclo (28/09 a 27/10)
+            _lanc("2026-10-01", 300, "Compras", tipo="Despesa"),
+        ]
+        lancamentos[-1]["totalParcelas"] = 3
+        resultado = estatisticas.projecao_compromissos_futuros(lancamentos, "2026-09", meses=2)
+        self.assertEqual(len(resultado), 2)
+        primeiro = resultado[0]
+        self.assertEqual(primeiro["ciclo"], "2026-10")
+        self.assertEqual(primeiro["receitaEsperada"], 5000.0)
+        self.assertEqual(primeiro["parcelasComprometidas"], 300.0)
+        self.assertEqual(primeiro["saldoEsperado"], 4700.0)
+        self.assertEqual(primeiro["acumulado"], 4700.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_acumulado_soma_ciclo_a_ciclo(self, _hoje):
+        lancamentos = [_lanc("2026-08-05", 1000, "Salário", tipo="Receita")]
+        resultado = estatisticas.projecao_compromissos_futuros(lancamentos, "2026-09", meses=3)
+        self.assertEqual([r["acumulado"] for r in resultado], [1000.0, 2000.0, 3000.0])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_receita_esperada_nao_zera_mesmo_em_ciclos_distantes(self, _hoje):
+        """Encadeando vários ciclos futuros, os mais próximos não têm lançamento
+        real nenhum — a mediana de receita precisa olhar além dos 3 ciclos
+        imediatamente anteriores pra não cair pra zero."""
+        lancamentos = [_lanc("2026-08-05", 1000, "Salário", tipo="Receita")]
+        resultado = estatisticas.projecao_compromissos_futuros(lancamentos, "2026-09", meses=6)
+        self.assertTrue(all(r["receitaEsperada"] == 1000.0 for r in resultado))
+
+
 class TestScoreDia(unittest.TestCase):
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_transacao_grande_desconta_pontuacao_e_gera_alerta(self, _hoje):

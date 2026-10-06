@@ -219,10 +219,15 @@ GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 def _media_historica_despesa_centavos(
     lancamentos: Sequence[Dict[str, Any]], inicio: str, categoria: Optional[str] = None
 ) -> Optional[int]:
-    """Média de despesa nos 3 ciclos de fatura anteriores ao que começa em `inicio`."""
+    """Média dos últimos 3 ciclos de fatura ANTERIORES a `inicio` que tiveram
+    gasto de verdade — pula ciclos vazios (relevante ao encadear vários ciclos
+    futuros, onde os mais próximos ainda não têm nenhum lançamento real) em
+    vez de parar nos 3 primeiros e arriscar não achar nenhum dado."""
     totais = []
     inicio_alvo = inicio
-    for _ in range(3):
+    for _ in range(12):
+        if len(totais) >= 3:
+            break
         inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
@@ -274,12 +279,17 @@ def _dia_de_referencia(inicio: str, fim: str) -> tuple[str, int, int]:
 
 
 def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) -> float:
-    """Mediana das receitas totais dos 3 ciclos de fatura fechados anteriores —
-    salário chega de uma vez só, então "projetar pelo ritmo" não funciona pra
-    receita como funciona pra despesa."""
+    """Mediana das receitas totais dos últimos 3 ciclos de fatura ANTERIORES a
+    `inicio` que tiveram receita de verdade — pula ciclos vazios, igual
+    `_media_historica_despesa_centavos` (necessário ao encadear vários ciclos
+    futuros em `projecao_compromissos_futuros`). Salário chega de uma vez só,
+    então "projetar pelo ritmo" não funciona pra receita como funciona pra
+    despesa."""
     totais = []
     inicio_alvo = inicio
-    for _ in range(3):
+    for _ in range(12):
+        if len(totais) >= 3:
+            break
         inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
@@ -405,6 +415,127 @@ def projecao_poupanca(
         resultado["aderenciaPercentual"] = round(poupanca_projetada / meta_valor * 100, 1)
         resultado["noCaminho"] = poupanca_projetada >= meta_valor
     return resultado
+
+
+def dre(
+    lancamentos: Sequence[Dict[str, Any]],
+    orcamentos: Sequence[Dict[str, Any]],
+    rotulo: Optional[str] = None,
+) -> Dict[str, Any]:
+    """DRE pessoal do ciclo de fatura: receita bruta, despesas por categoria,
+    resultado líquido e margem (resultado/receita) — "realizado" com o que já
+    aconteceu, "projetado" usando a mesma projeção por categoria do score/meta.
+    Capex de negócio sai à parte (não é despesa operacional)."""
+    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    limite_por_categoria = {o["categoria"]: o["limite"] for o in orcamentos}
+
+    despesas_ciclo = [
+        e for e in lancamentos
+        if e.get("tipo") == config.TIPO_DESPESA and inicio <= (e.get("data") or "") <= fim
+    ]
+    receitas_ciclo = [
+        e for e in lancamentos
+        if e.get("tipo") == config.TIPO_RECEITA and inicio <= (e.get("data") or "") <= fim
+    ]
+    capex_centavos = sum(
+        para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
+    )
+    receita_bruta_centavos = sum(para_centavos(e.get("valor") or 0) for e in receitas_ciclo)
+
+    categorias_operacionais = [c for c in config.CATEGORIAS_DESPESA if c != CATEGORIA_NEGOCIO]
+
+    despesas_realizado = []
+    total_despesas_centavos = 0
+    for categoria in categorias_operacionais:
+        valor_centavos = sum(
+            para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == categoria
+        )
+        if valor_centavos:
+            despesas_realizado.append({"categoria": categoria, "valor": para_reais(valor_centavos)})
+            total_despesas_centavos += valor_centavos
+    despesas_realizado.sort(key=lambda c: -c["valor"])
+
+    resultado_liquido_centavos = receita_bruta_centavos - total_despesas_centavos
+    margem = (
+        round(resultado_liquido_centavos / receita_bruta_centavos * 100, 1) if receita_bruta_centavos else None
+    )
+    realizado = {
+        "receitaBruta": para_reais(receita_bruta_centavos),
+        "despesasPorCategoria": despesas_realizado,
+        "totalDespesas": para_reais(total_despesas_centavos),
+        "resultadoLiquido": para_reais(resultado_liquido_centavos),
+        "margemPercentual": margem,
+    }
+
+    receita_esperada = _receita_esperada_ciclo(lancamentos, inicio)
+    receita_esperada_centavos = para_centavos(receita_esperada)
+    despesas_projetado = []
+    total_projetado_centavos = 0
+    for categoria in categorias_operacionais:
+        projecao = projecao_categoria(lancamentos, categoria, limite_por_categoria.get(categoria), inicio, fim)
+        if projecao["projecao"]:
+            despesas_projetado.append({"categoria": categoria, "valor": projecao["projecao"]})
+            total_projetado_centavos += para_centavos(projecao["projecao"])
+    despesas_projetado.sort(key=lambda c: -c["valor"])
+
+    resultado_liquido_projetado_centavos = receita_esperada_centavos - total_projetado_centavos
+    margem_projetada = (
+        round(resultado_liquido_projetado_centavos / receita_esperada_centavos * 100, 1)
+        if receita_esperada_centavos else None
+    )
+    projetado = {
+        "receitaBruta": receita_esperada,
+        "despesasPorCategoria": despesas_projetado,
+        "totalDespesas": para_reais(total_projetado_centavos),
+        "resultadoLiquido": para_reais(resultado_liquido_projetado_centavos),
+        "margemPercentual": margem_projetada,
+    }
+
+    return {
+        "ciclo": rotulo_ciclo(fim),
+        "inicio": inicio,
+        "fim": fim,
+        "realizado": realizado,
+        "projetado": projetado,
+        "capex": para_reais(capex_centavos),
+    }
+
+
+def projecao_compromissos_futuros(
+    lancamentos: Sequence[Dict[str, Any]],
+    rotulo_referencia: Optional[str] = None,
+    meses: int = 6,
+) -> List[Dict[str, Any]]:
+    """Quanto deve sobrar em cada um dos próximos ciclos, de forma conservadora:
+    só receita esperada menos o que já é CERTO (parcelas já cadastradas) — não
+    assume que o orçamento planejado vai ser gasto por inteiro. `acumulado` é a
+    reserva esperada somando os ciclos um a um."""
+    _, fim = ciclo_por_rotulo(rotulo_referencia) if rotulo_referencia else ciclo_atual()
+    saida = []
+    acumulado = 0.0
+    for _ in range(meses):
+        inicio_alvo, fim = ciclo_seguinte(fim)
+        parcelas_centavos = sum(
+            para_centavos(e.get("valor") or 0)
+            for e in lancamentos
+            if inicio_alvo <= (e.get("data") or "") <= fim
+            and e.get("tipo") == config.TIPO_DESPESA
+            and (e.get("totalParcelas") or 1) > 1
+        )
+        parcelas_comprometidas = para_reais(parcelas_centavos)
+        receita_esperada = _receita_esperada_ciclo(lancamentos, inicio_alvo)
+        saldo_esperado = round(receita_esperada - parcelas_comprometidas, 2)
+        acumulado = round(acumulado + saldo_esperado, 2)
+        saida.append({
+            "ciclo": rotulo_ciclo(fim),
+            "inicio": inicio_alvo,
+            "fim": fim,
+            "receitaEsperada": receita_esperada,
+            "parcelasComprometidas": parcelas_comprometidas,
+            "saldoEsperado": saldo_esperado,
+            "acumulado": acumulado,
+        })
+    return saida
 
 
 def _sinais_comportamentais(

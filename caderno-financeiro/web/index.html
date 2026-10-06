@@ -58,14 +58,18 @@
     </section>
 
     <section id="tab-painel" class="aba" hidden>
-      <div id="score-cartao" class="cartao score-cartao"></div>
-
-      <div id="meta-cartao" class="cartao meta-cartao"></div>
+      <div id="score-cartao" class="cartao score-cartao score-compacto"></div>
 
       <div class="painel-bloco-titulo">
-        <span>Orçamentos</span>
+        <span>DRE — realizado</span>
         <span id="painel-ciclo-rotulo" class="painel-bloco-subtitulo">—</span>
       </div>
+      <div id="dre-realizado-cartao" class="cartao dre-cartao"></div>
+
+      <div class="painel-bloco-titulo"><span>DRE — projetado até o fechamento</span></div>
+      <div id="dre-projetado-cartao" class="cartao dre-cartao dre-projetado"></div>
+
+      <div class="painel-bloco-titulo"><span>Orçamentos</span></div>
       <div id="orcamentos-lista"></div>
       <form id="form-orcamento" class="cartao form-orcamento">
         <select id="orcamento-categoria"></select>
@@ -80,6 +84,12 @@
 
       <div class="painel-bloco-titulo"><span>Investimentos</span></div>
       <div id="investimentos-lista"></div>
+    </section>
+
+    <section id="tab-futuro" class="aba" hidden>
+      <div id="futuro-resumo-cartao" class="cartao futuro-resumo-cartao"></div>
+      <div class="painel-bloco-titulo"><span>Próximos ciclos</span></div>
+      <div id="futuro-lista"></div>
     </section>
 
     <section id="tab-perguntar" class="aba" hidden>
@@ -109,7 +119,10 @@
       <span class="aba-icone">▤</span><span>Resumo</span>
     </button>
     <button class="aba-botao" data-aba="painel">
-      <span class="aba-icone">📊</span><span>Painel</span>
+      <span class="aba-icone">📊</span><span>DRE</span>
+    </button>
+    <button class="aba-botao" data-aba="futuro">
+      <span class="aba-icone">📅</span><span>Futuro</span>
     </button>
     <button class="aba-botao" data-aba="perguntar">
       <span class="aba-icone">💬</span><span>Perguntar</span>

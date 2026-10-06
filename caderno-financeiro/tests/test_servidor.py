@@ -140,6 +140,23 @@ class TestServidor(unittest.TestCase):
         self.assertIn("pontuacao", corpo)
         self.assertIn("classificacao", corpo)
 
+    def test_dre(self):
+        r = self.cliente.get("/api/dre", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        corpo = r.get_json()
+        self.assertIn("realizado", corpo)
+        self.assertIn("projetado", corpo)
+        self.assertIn("capex", corpo)
+        self.assertIn("margemPercentual", corpo["realizado"])
+
+    def test_compromissos_futuros(self):
+        r = self.cliente.get("/api/compromissos-futuros?meses=3", headers=self.auth)
+        self.assertEqual(r.status_code, 200)
+        corpo = r.get_json()
+        self.assertEqual(len(corpo), 3)
+        self.assertIn("saldoEsperado", corpo[0])
+        self.assertIn("acumulado", corpo[0])
+
     def test_score(self):
         r = self.cliente.get("/api/score", headers=self.auth)
         self.assertEqual(r.status_code, 200)

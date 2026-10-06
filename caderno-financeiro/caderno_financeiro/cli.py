@@ -621,6 +621,55 @@ def cmd_saude(args) -> int:
     return 0
 
 
+def cmd_dre(args) -> int:
+    rotulo = validar_mes(args.mes) if args.mes else rotulo_ciclo_atual()
+    with db.banco(args.banco) as conexao:
+        lancamentos = db.listar(conexao)
+        orcamentos = db.listar_orcamentos(conexao)
+    resultado = estatisticas.dre(lancamentos, orcamentos, rotulo)
+    if args.json:
+        imprimir_json(resultado)
+        return 0
+
+    def _bloco(titulo: str, dados: Dict[str, Any]) -> None:
+        print(pintar(f"\n  {titulo}", NEGRITO))
+        print(f"    receita bruta:    {formatar(dados['receitaBruta'])}")
+        for item in dados["despesasPorCategoria"]:
+            print(f"    (-) {item['categoria']:<16} {formatar(item['valor']):>13}")
+        print(f"    {'-' * 35}")
+        cor_resultado = VERDE if dados["resultadoLiquido"] >= 0 else VERMELHO
+        print(f"    resultado líquido: {pintar(formatar(dados['resultadoLiquido']), cor_resultado)}")
+        if dados["margemPercentual"] is not None:
+            print(f"    margem:            {dados['margemPercentual']}%")
+
+    print(pintar(f"\nDRE — ciclo de {resultado['ciclo']} ({resultado['inicio']} a {resultado['fim']})", NEGRITO))
+    _bloco("Realizado", resultado["realizado"])
+    _bloco("Projetado até o fechamento", resultado["projetado"])
+    if resultado["capex"]:
+        print(pintar(f"\n  Capex (fora do operacional): {formatar(resultado['capex'])}", AMARELO))
+    print()
+    return 0
+
+
+def cmd_futuro(args) -> int:
+    with db.banco(args.banco) as conexao:
+        lancamentos = db.listar(conexao)
+    resultado = estatisticas.projecao_compromissos_futuros(lancamentos, meses=args.meses)
+    if args.json:
+        imprimir_json(resultado)
+        return 0
+
+    print(pintar("\nCompromissos futuros (receita esperada − parcelas já certas)", NEGRITO))
+    for item in resultado:
+        cor = VERDE if item["saldoEsperado"] >= 0 else VERMELHO
+        print(f"  {item['ciclo']}  receita {formatar(item['receitaEsperada']):>12}   "
+              f"parcelas {formatar(item['parcelasComprometidas']):>10}   "
+              f"saldo {pintar(formatar(item['saldoEsperado']), cor):>12}   "
+              f"acumulado {formatar(item['acumulado']):>12}")
+    print()
+    return 0
+
+
 def cmd_meta(args) -> int:
     with db.banco(args.banco) as conexao:
         if args.definir:
@@ -892,6 +941,16 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("-m", "--mes")
     p.add_argument("--json", action="store_true")
     p.set_defaults(funcao=cmd_saude)
+
+    p = subcomandos.add_parser("dre", help="DRE pessoal do ciclo de fatura: receita, despesas por categoria, resultado e margem")
+    p.add_argument("-m", "--mes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_dre)
+
+    p = subcomandos.add_parser("futuro", help="quanto deve sobrar nos próximos ciclos (receita esperada − parcelas já certas)")
+    p.add_argument("--meses", type=int, default=6)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_futuro)
 
     p = subcomandos.add_parser("meta", help="define/mostra a meta de poupança mensal e a projeção até o fim do mês")
     p.add_argument("--definir", metavar="VALOR", help="valor mensal de poupança-alvo, em reais")

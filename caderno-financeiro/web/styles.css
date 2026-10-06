@@ -214,6 +214,45 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
 .meta-barra { height: 10px; margin-bottom: 0.7rem; }
 .meta-numeros { display: flex; justify-content: space-between; font-size: 0.85rem; margin-top: 0.3rem; flex-wrap: wrap; gap: 0.3rem; }
 
+/* DRE (realizado + projetado) */
+.dre-cartao { display: flex; flex-direction: column; gap: 0.5rem; }
+.dre-linha { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.9rem; gap: 0.6rem; }
+.dre-linha .valor { font-weight: 600; white-space: nowrap; }
+.dre-linha .valor.despesa { color: var(--despesa); }
+.dre-linha .valor.receita { color: var(--receita); }
+.dre-receita { padding-bottom: 0.5rem; border-bottom: 1px solid var(--borda); font-weight: 600; }
+.dre-resultado { padding-top: 0.6rem; border-top: 1px solid var(--borda); font-weight: 700; font-size: 1rem; }
+.dre-margem { font-size: 0.8rem; margin-top: -0.2rem; }
+.margem-negativa { color: var(--despesa); }
+.dre-meta {
+  display: flex; justify-content: space-between; font-size: 0.82rem; font-weight: 600;
+  margin-top: 0.4rem; padding: 0.5rem 0.7rem; border-radius: 10px;
+}
+.dre-meta.no-caminho { color: var(--receita); background: rgb(52 211 153 / 0.12); }
+.dre-meta.fora-caminho { color: var(--despesa); background: rgb(251 113 133 / 0.12); }
+.dre-capex { font-size: 0.78rem; margin-top: 0.2rem; }
+.dre-projetado { border-color: var(--acento); border-width: 1px; }
+
+/* futuro (compromissos já certos nos próximos ciclos) */
+.futuro-resumo-cartao { text-align: center; }
+.futuro-acumulado { font-size: 1.8rem; font-weight: 700; margin: 0.3rem 0 0.5rem; }
+.futuro-acumulado.receita { color: var(--receita); }
+.futuro-acumulado.despesa { color: var(--despesa); }
+.futuro-item { margin-bottom: 0.7rem; }
+.futuro-topo { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.4rem; }
+.futuro-topo .categoria { font-weight: 600; text-transform: capitalize; }
+.futuro-topo .valor { font-weight: 700; }
+.futuro-topo .valor.receita { color: var(--receita); }
+.futuro-topo .valor.despesa { color: var(--despesa); }
+.futuro-detalhe { display: flex; justify-content: space-between; font-size: 0.82rem; flex-wrap: wrap; gap: 0.3rem; }
+.futuro-acumulado-linha { font-size: 0.78rem; margin-top: 0.35rem; padding-top: 0.35rem; border-top: 1px solid var(--borda); }
+
+/* score compacto no topo do painel (DRE é o foco agora) */
+.score-compacto .score-topo { gap: 0.8rem; }
+.score-compacto .anel-wrapper { width: 56px; height: 56px; }
+.score-compacto .anel-progresso { width: 56px; height: 56px; }
+.score-compacto .anel-texto { font-size: 1rem; }
+
 /* indicadores gerais (saúde financeira antiga, recolhido por padrão) */
 .painel-detalhes { margin-top: 0.8rem; }
 .painel-detalhes summary {

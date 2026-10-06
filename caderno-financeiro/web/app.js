@@ -186,6 +186,7 @@ function irParaAba(nome) {
   });
   if (nome === "resumo") carregarResumo();
   if (nome === "painel") carregarPainel();
+  if (nome === "futuro") carregarFuturo();
   if (nome === "historico") carregarHistorico();
   if (nome === "perguntar" && estado.historicoChat.length === 0) {
     renderizarMensagemAssistente("Pergunte o que quiser sobre seus gastos — ex: \"quanto gastei em mercado esse mês?\"");
@@ -356,20 +357,21 @@ function adicionarBlocoBarras(container, titulo, grupos, total) {
 }
 
 // ---------------------------------------------------------------------------
-// painel (score do dia + meta de poupança + orçamentos + investimentos)
+// painel (score do dia + DRE realizado/projetado + orçamentos + investimentos)
 // ---------------------------------------------------------------------------
 
 async function carregarPainel() {
   const scoreContainer = document.getElementById("score-cartao");
-  const metaContainer = document.getElementById("meta-cartao");
+  const dreRealizadoContainer = document.getElementById("dre-realizado-cartao");
+  const dreProjetadoContainer = document.getElementById("dre-projetado-cartao");
   const saudeContainer = document.getElementById("saude-cartao");
   const orcamentosContainer = document.getElementById("orcamentos-lista");
   const investimentosContainer = document.getElementById("investimentos-lista");
-  scoreContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
-  metaContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
-  saudeContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
-  orcamentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
-  investimentosContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  const containers = [
+    scoreContainer, dreRealizadoContainer, dreProjetadoContainer,
+    saudeContainer, orcamentosContainer, investimentosContainer,
+  ];
+  containers.forEach((c) => (c.innerHTML = `<p class="texto-fraco">carregando...</p>`));
 
   try {
     if (!estado.categoriasDespesa.length) {
@@ -377,26 +379,107 @@ async function carregarPainel() {
       estado.categoriasDespesa = panorama.categoriasDespesa;
       preencherSelectCategorias();
     }
-    const [score, meta, saude, orcamentos, investimentos] = await Promise.all([
+    const [score, dre, meta, saude, orcamentos, investimentos] = await Promise.all([
       api("/api/score"),
+      api("/api/dre"),
       api("/api/meta"),
       api(`/api/saude?mes=${mesAtual()}`),
       api("/api/orcamentos"),
       api("/api/investimentos"),
     ]);
     document.getElementById("painel-ciclo-rotulo").textContent =
-      `ciclo de ${rotuloMes(meta.ciclo)} · fecha ${formatarDataCurta(meta.fim)}`;
+      `ciclo de ${rotuloMes(dre.ciclo)} · fecha ${formatarDataCurta(dre.fim)}`;
     renderizarScore(scoreContainer, score);
-    renderizarMeta(metaContainer, meta);
+    renderizarDre(dreRealizadoContainer, dre.realizado);
+    renderizarDre(dreProjetadoContainer, dre.projetado, meta, dre.capex);
     renderizarSaude(saudeContainer, saude);
     renderizarOrcamentos(orcamentosContainer, orcamentos);
     renderizarInvestimentos(investimentosContainer, investimentos);
   } catch (erro) {
     if (erro.status !== 401) {
-      [scoreContainer, metaContainer, saudeContainer, orcamentosContainer, investimentosContainer].forEach(
-        (c) => (c.innerHTML = "")
-      );
+      containers.forEach((c) => (c.innerHTML = ""));
       scoreContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
+    }
+  }
+}
+
+function renderizarDre(container, bloco, meta, capex) {
+  container.innerHTML = "";
+  container.appendChild(el("div", { class: "dre-linha dre-receita" }, [
+    el("span", { texto: "Receita bruta" }),
+    el("span", { class: "valor receita", texto: formatarMoeda(bloco.receitaBruta) }),
+  ]));
+  bloco.despesasPorCategoria.forEach((item) => {
+    container.appendChild(el("div", { class: "dre-linha" }, [
+      el("span", { class: "texto-fraco", texto: `(-) ${item.categoria}` }),
+      el("span", { class: "valor despesa", texto: formatarMoeda(item.valor) }),
+    ]));
+  });
+  const positivo = bloco.resultadoLiquido >= 0;
+  container.appendChild(el("div", { class: "dre-linha dre-resultado" }, [
+    el("span", { texto: "Resultado líquido" }),
+    el("span", { class: `valor ${positivo ? "receita" : "despesa"}`, texto: formatarMoeda(bloco.resultadoLiquido) }),
+  ]));
+  if (bloco.margemPercentual !== null && bloco.margemPercentual !== undefined) {
+    container.appendChild(el("div", { class: "dre-linha dre-margem" }, [
+      el("span", { class: "texto-fraco", texto: "Margem" }),
+      el("span", { class: `texto-fraco ${positivo ? "" : "margem-negativa"}`, texto: `${bloco.margemPercentual}%` }),
+    ]));
+  }
+  if (meta && meta.metaDefinida) {
+    const cor = meta.noCaminho ? "no-caminho" : "fora-caminho";
+    container.appendChild(el("div", { class: `dre-meta ${cor}` }, [
+      el("span", { texto: `meta: ${formatarMoeda(meta.metaDefinida)}` }),
+      el("span", { texto: meta.noCaminho ? "no caminho" : "fora do caminho" }),
+    ]));
+  }
+  if (capex) {
+    container.appendChild(el("div", { class: "dre-capex texto-fraco", texto: `+ capex (fora do operacional): ${formatarMoeda(capex)}` }));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// futuro (compromissos já certos nos próximos ciclos)
+// ---------------------------------------------------------------------------
+
+async function carregarFuturo() {
+  const resumoContainer = document.getElementById("futuro-resumo-cartao");
+  const listaContainer = document.getElementById("futuro-lista");
+  resumoContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  listaContainer.innerHTML = "";
+  try {
+    const dados = await api("/api/compromissos-futuros?meses=6");
+    const ultimo = dados[dados.length - 1];
+    resumoContainer.innerHTML = "";
+    resumoContainer.appendChild(el("span", { class: "meta-rotulo", texto: `Reserva esperada em ${dados.length} ciclos` }));
+    resumoContainer.appendChild(el("div", {
+      class: `futuro-acumulado ${ultimo.acumulado >= 0 ? "receita" : "despesa"}`,
+      texto: formatarMoeda(ultimo.acumulado),
+    }));
+    resumoContainer.appendChild(el("p", { class: "texto-fraco",
+      texto: "receita esperada menos só o que já é certo (parcelas) — não assume gasto do orçamento inteiro." }));
+
+    listaContainer.innerHTML = "";
+    dados.forEach((item) => {
+      const positivo = item.saldoEsperado >= 0;
+      listaContainer.appendChild(el("div", { class: "cartao futuro-item" }, [
+        el("div", { class: "futuro-topo" }, [
+          el("span", { class: "categoria", texto: rotuloMes(item.ciclo) }),
+          el("span", { class: `valor ${positivo ? "receita" : "despesa"}`, texto: formatarMoeda(item.saldoEsperado) }),
+        ]),
+        el("div", { class: "futuro-detalhe texto-fraco" }, [
+          el("span", { texto: `receita esperada ${formatarMoeda(item.receitaEsperada)}` }),
+          el("span", { texto: `parcelas certas ${formatarMoeda(item.parcelasComprometidas)}` }),
+        ]),
+        el("div", { class: "futuro-acumulado-linha texto-fraco" }, [
+          el("span", { texto: `acumulado: ${formatarMoeda(item.acumulado)}` }),
+        ]),
+      ]));
+    });
+  } catch (erro) {
+    if (erro.status !== 401) {
+      resumoContainer.innerHTML = "";
+      resumoContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
     }
   }
 }
@@ -464,34 +547,6 @@ function elementoAnelProgresso(percentual, classe) {
   const wrapper = el("div", { class: "anel-wrapper" });
   wrapper.appendChild(svg);
   return wrapper;
-}
-
-function renderizarMeta(container, m) {
-  container.innerHTML = "";
-  if (!m.metaDefinida) {
-    container.appendChild(el("span", { class: "meta-rotulo", texto: "Meta de poupança" }));
-    container.appendChild(el("p", { class: "texto-fraco", texto: "nenhuma meta definida ainda." }));
-    return;
-  }
-  const percentual = Math.max(0, Math.min(100, m.aderenciaPercentual ?? 0));
-  const corClasse = m.noCaminho ? "" : (percentual >= 50 ? "atencao" : "estourado");
-
-  container.appendChild(el("div", { class: "meta-topo" }, [
-    el("span", { class: "meta-rotulo", texto: "Meta de poupança" }),
-    el("span", { class: `meta-status ${m.noCaminho ? "no-caminho" : "fora-caminho"}`,
-      texto: m.noCaminho ? "no caminho" : "fora do caminho" }),
-  ]));
-  container.appendChild(el("div", { class: "barra-fundo meta-barra" }, [
-    el("div", { class: `barra-preenchimento ${corClasse}`, style: `width:${percentual}%` }),
-  ]));
-  container.appendChild(el("div", { class: "meta-numeros" }, [
-    el("span", { texto: `poupança projetada: ${formatarMoeda(m.poupancaProjetada)}` }),
-    el("span", { class: "texto-fraco", texto: `meta: ${formatarMoeda(m.metaDefinida)}` }),
-  ]));
-  container.appendChild(el("div", { class: "meta-numeros" }, [
-    el("span", { class: "texto-fraco", texto: `receita esperada: ${formatarMoeda(m.receitaEsperada)}` }),
-    el("span", { class: "texto-fraco", texto: `despesa projetada: ${formatarMoeda(m.despesaProjetada)}` }),
-  ]));
 }
 
 function preencherSelectCategorias() {

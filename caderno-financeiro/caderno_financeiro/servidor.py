@@ -186,6 +186,20 @@ def criar_app() -> Flask:
             return _erro("não tinha orçamento definido pra essa categoria", 404)
         return jsonify({"ok": True})
 
+    @app.get("/api/dre")
+    def _dre():
+        conexao = _conexao()
+        mes = request.args.get("mes")
+        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
+        resultado = estatisticas.dre(db.listar(conexao), db.listar_orcamentos(conexao), mes)
+        return jsonify(resultado)
+
+    @app.get("/api/compromissos-futuros")
+    def _compromissos_futuros():
+        meses = int(request.args.get("meses", 6))
+        resultado = estatisticas.projecao_compromissos_futuros(db.listar(_conexao()), meses=meses)
+        return jsonify(resultado)
+
     @app.get("/api/score")
     def _score():
         conexao = _conexao()
