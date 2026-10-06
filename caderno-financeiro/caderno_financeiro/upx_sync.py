@@ -241,6 +241,16 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
         valor = valor_bruto.get("amount") if isinstance(valor_bruto, dict) else valor_bruto
         descricao = str(bruta.get("description") or "").strip() or "(sem descrição)"
 
+        # A UPX manda o parcelamento de verdade aqui (ex.: "7/12" na descrição
+        # bate com installment_number/total_installments) — sem ler isso, toda
+        # parcela futura já cadastrada (inclusive as que ainda vão vencer)
+        # virava "totalParcelas": 1, e o resto do app (orçamento/score/futuro)
+        # não reconhecia como compromisso certo, só como gasto variável comum.
+        installment = bruta.get("installment")
+        installment = installment if isinstance(installment, dict) else {}
+        parcela_atual = installment.get("installment_number") or 1
+        total_parcelas = installment.get("total_installments") or 1
+
         resultado.append({
             "transactionId": str(transaction_id),
             "instituicao": info_conta.get("instituicao", "UPX"),
@@ -250,6 +260,8 @@ def buscar_transacoes_novas(desde: str, ate: str) -> List[Dict[str, Any]]:
             "tipo": config.TIPO_RECEITA if bruta.get("direction") == "inflow" else config.TIPO_DESPESA,
             "valor": abs(float(valor or 0)),
             "descricao": descricao,
+            "parcelaAtual": int(parcela_atual),
+            "totalParcelas": int(total_parcelas),
         })
     return resultado
 
@@ -332,6 +344,8 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
             "descricao": descricao,
             "formaPagamento": _mapear_forma_pagamento(str(bruta.get("contaCategoria") or ""), descricao),
             "conta": str(bruta.get("contaNome") or bruta.get("instituicao") or "UPX"),
+            "parcelaAtual": int(bruta.get("parcelaAtual") or 1),
+            "totalParcelas": int(bruta.get("totalParcelas") or 1),
         })
 
     resultado: Dict[str, Any] = {"transacoesNovas": 0, "paraRevisao": 0, "duplicadas": duplicadas}
@@ -370,8 +384,8 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
                 "categoria": categoria,
                 "valor": transacao["valor"],
                 "valorTotal": transacao["valor"],
-                "parcelaAtual": 1,
-                "totalParcelas": 1,
+                "parcelaAtual": transacao["parcelaAtual"],
+                "totalParcelas": transacao["totalParcelas"],
                 "formaPagamento": transacao["formaPagamento"],
                 "conta": transacao["conta"],
                 "descricao": transacao["descricao"],

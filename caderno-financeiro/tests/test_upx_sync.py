@@ -28,6 +28,7 @@ def transacao_bruta(
     direction="outflow",
     pendente=False,
     counterparty_name=None,
+    installment=None,
 ):
     bruta = {
         "transaction_id": transaction_id,
@@ -40,6 +41,8 @@ def transacao_bruta(
     }
     if counterparty_name is not None:
         bruta["counterparty_name"] = counterparty_name
+    if installment is not None:
+        bruta["installment"] = installment
     return bruta
 
 
@@ -98,6 +101,37 @@ class TestSincronizar(unittest.TestCase):
         self.assertEqual(lanc["origemId"], "tx-1")
         self.assertEqual(lanc["revisaoPendente"], 0)
         self.assertEqual(lanc["conta"], "Conta Corrente")
+
+    def test_parcelamento_da_upx_e_propagado_pro_lancamento(self):
+        """A UPX manda installment_number/total_installments no payload bruto
+        (ex.: "7/12" na descrição) — sem propagar isso, toda parcela futura já
+        cadastrada virava totalParcelas=1 e o resto do app (orçamento, score,
+        projeção de compromissos futuros) não reconhecia como compromisso
+        certo, só como gasto variável comum."""
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-parcela", valor=29.9, descricao="Htm*Jmm Company 7/12",
+            installment={"installment_number": 7, "total_installments": 12, "purchase_date": "2026-05-26"},
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Assinaturas", "confianca": 0.95}]):
+            upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(len(lancamentos), 1)
+        self.assertEqual(lancamentos[0]["parcelaAtual"], 7)
+        self.assertEqual(lancamentos[0]["totalParcelas"], 12)
+
+    def test_transacao_sem_installment_fica_1_de_1(self):
+        transacoes = [pagina([transacao_bruta(transaction_id="tx-avulsa", valor=24.9)])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Transporte", "confianca": 0.95}]):
+            upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        self.assertEqual(lancamentos[0]["parcelaAtual"], 1)
+        self.assertEqual(lancamentos[0]["totalParcelas"], 1)
 
     def test_transacao_com_confianca_baixa_vai_pra_fila_de_revisao(self):
         transacoes = [pagina([transacao_bruta(transaction_id="tx-2", valor=50.0, descricao="PAG*ALGUEM")])]
