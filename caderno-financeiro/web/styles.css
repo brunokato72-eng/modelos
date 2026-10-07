@@ -120,9 +120,6 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--acento); }
   box-shadow: var(--sombra);
 }
 
-#form-registrar label { display: block; margin-bottom: 0.5rem; color: var(--texto-fraco); font-size: 0.9rem; }
-#form-registrar textarea { resize: vertical; margin-bottom: 0.7rem; }
-.linha-botoes { display: flex; justify-content: flex-end; }
 
 .lista-lancamentos { display: flex; flex-direction: column; gap: 0.6rem; }
 

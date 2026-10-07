@@ -96,6 +96,40 @@ class TestProjecaoComPoucosDias(unittest.TestCase):
         self.assertEqual(resultado["projecao"], 3100.0)
 
 
+class TestProjecaoDeCicloFuturo(unittest.TestCase):
+    """Ciclo que ainda nem começou: sem ritmo nenhum, a projeção por categoria
+    tem que vir 100% da média histórica (mais o piso do que já é certo),
+    não do que já está cadastrado nesse ciclo específico (que seria só o que
+    for certo, subestimando o resto)."""
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2025-12-28")
+    def test_ciclo_futuro_usa_media_historica_sem_ritmo(self, _hoje):
+        lancamentos = [
+            _lanc("2025-09-28", 900, "Compras"),
+            _lanc("2025-10-28", 900, "Compras"),
+            _lanc("2025-11-28", 900, "Compras"),
+        ]
+        # ciclo "2026-01" = [2025-12-28, 2026-01-27] ainda não começou (hoje é 2025-12-28,
+        # véspera) — na verdade hoje==inicio cairia no ramo "ciclo corrente"; uso um ciclo
+        # mais à frente pra garantir que ainda não começou.
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-01-28", "2026-02-27")
+        self.assertEqual(resultado["gasto"], 0.0)
+        self.assertEqual(resultado["projecao"], 900.0)
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2025-12-28")
+    def test_ciclo_futuro_respeita_piso_do_que_ja_e_certo(self, _hoje):
+        lancamentos = [
+            _lanc("2025-09-28", 100, "Compras"),
+            _lanc("2025-10-28", 100, "Compras"),
+            _lanc("2025-11-28", 100, "Compras"),
+            # parcela já cadastrada pro ciclo futuro, maior que a média histórica
+            _lanc("2026-02-05", 5000, "Compras"),
+        ]
+        resultado = estatisticas.projecao_categoria(lancamentos, "Compras", 500, "2026-01-28", "2026-02-27")
+        self.assertEqual(resultado["gasto"], 5000.0)
+        self.assertEqual(resultado["projecao"], 5000.0)
+
+
 class TestProjecaoComParcelasFuturas(unittest.TestCase):
     """Parcela futura já cadastrada no ciclo é gasto CERTO, não estimativa — não
     pode entrar no "até agora" e ser multiplicada de novo pelo ritmo."""

@@ -289,12 +289,17 @@ def _dia_de_referencia(inicio: str, fim: str) -> tuple[str, int, int]:
     """(data de referência, dia do ciclo já decorrido, dias totais do ciclo).
 
     Pro ciclo corrente usa hoje; pro ciclo já fechado considera ele inteiro
-    decorrido (não faz sentido "projetar" um ciclo que já acabou)."""
+    decorrido (não faz sentido "projetar" um ciclo que já acabou); pro ciclo
+    que ainda nem começou, dia_atual=0 — sem ritmo nenhum pra usar, a
+    projeção (via `_projetar_com_shrinkage`) parte 100% da média histórica,
+    só respeitando o piso do que já estiver cadastrado como certo."""
     hoje = hoje_iso()
     dias_totais = dias_entre(inicio, fim) + 1
     if inicio <= hoje <= fim:
         return hoje, dias_entre(inicio, hoje) + 1, dias_totais
-    return fim, dias_totais, dias_totais
+    if hoje > fim:
+        return fim, dias_totais, dias_totais
+    return somar_dias(inicio, -1), 0, dias_totais
 
 
 def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) -> float:

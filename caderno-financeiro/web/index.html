@@ -36,19 +36,7 @@
 
   <main id="conteudo" class="conteudo">
 
-    <section id="tab-registrar" class="aba">
-      <form id="form-registrar" class="cartao">
-        <label for="campo-texto">O que aconteceu?</label>
-        <textarea id="campo-texto" rows="3" placeholder='"45,90 no mercado ontem", "recebi 5200 de salário"...'></textarea>
-        <div class="linha-botoes">
-          <button type="submit" id="botao-registrar">Registrar</button>
-        </div>
-      </form>
-      <div id="registrar-status"></div>
-      <div id="registrar-lista" class="lista-lancamentos"></div>
-    </section>
-
-    <section id="tab-resumo" class="aba" hidden>
+    <section id="tab-resumo" class="aba">
       <div class="seletor-mes cartao">
         <button id="mes-anterior" class="botao-icone">‹</button>
         <span id="mes-atual-rotulo">—</span>
@@ -86,10 +74,23 @@
       <div id="investimentos-lista"></div>
     </section>
 
-    <section id="tab-futuro" class="aba" hidden>
-      <div id="futuro-resumo-cartao" class="cartao futuro-resumo-cartao"></div>
-      <div class="painel-bloco-titulo"><span>Próximos ciclos</span></div>
-      <div id="futuro-lista"></div>
+    <section id="tab-dre-futuro" class="aba" hidden>
+      <div class="seletor-mes cartao">
+        <button id="dre-futuro-anterior" class="botao-icone">‹</button>
+        <span id="dre-futuro-rotulo">—</span>
+        <button id="dre-futuro-seguinte" class="botao-icone">›</button>
+      </div>
+      <div id="dre-futuro-cartao" class="cartao dre-cartao dre-projetado"></div>
+      <div id="dre-futuro-acumulado-cartao" class="cartao futuro-resumo-cartao"></div>
+    </section>
+
+    <section id="tab-dre-anterior" class="aba" hidden>
+      <div class="seletor-mes cartao">
+        <button id="dre-anterior-anterior" class="botao-icone">‹</button>
+        <span id="dre-anterior-rotulo">—</span>
+        <button id="dre-anterior-seguinte" class="botao-icone">›</button>
+      </div>
+      <div id="dre-anterior-cartao" class="cartao dre-cartao"></div>
     </section>
 
     <section id="tab-perguntar" class="aba" hidden>
@@ -112,17 +113,17 @@
   </main>
 
   <nav class="abas-nav">
-    <button class="aba-botao ativo" data-aba="registrar">
-      <span class="aba-icone">＋</span><span>Registrar</span>
-    </button>
-    <button class="aba-botao" data-aba="resumo">
+    <button class="aba-botao ativo" data-aba="resumo">
       <span class="aba-icone">▤</span><span>Resumo</span>
     </button>
     <button class="aba-botao" data-aba="painel">
       <span class="aba-icone">📊</span><span>DRE</span>
     </button>
-    <button class="aba-botao" data-aba="futuro">
+    <button class="aba-botao" data-aba="dre-futuro">
       <span class="aba-icone">📅</span><span>Futuro</span>
+    </button>
+    <button class="aba-botao" data-aba="dre-anterior">
+      <span class="aba-icone">🗂</span><span>Anterior</span>
     </button>
     <button class="aba-botao" data-aba="perguntar">
       <span class="aba-icone">💬</span><span>Perguntar</span>

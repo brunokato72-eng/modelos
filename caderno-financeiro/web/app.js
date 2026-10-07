@@ -6,9 +6,11 @@
 
 const estado = {
   token: localStorage.getItem("caderno_token") || null,
-  abaAtiva: "registrar",
+  abaAtiva: "resumo",
   mesResumo: mesAtual(),
   mesHistorico: mesAtual(),
+  mesDreFuturo: somarMes(mesAtual(), 1),
+  mesDreAnterior: somarMes(mesAtual(), -1),
   categoriasDespesa: [],
   historicoChat: [], // [{pergunta, resposta}]
 };
@@ -133,7 +135,7 @@ async function iniciar() {
     const status = await api("/api/auth/status");
     if (status.sessaoValida) {
       mostrarApp();
-      irParaAba("registrar");
+      irParaAba("resumo");
     } else {
       esquecerSessao();
       mostrarLogin();
@@ -159,7 +161,7 @@ document.getElementById("form-login").addEventListener("submit", async (evento) 
     guardarSessao(corpo.token);
     campoPin.value = "";
     mostrarApp();
-    irParaAba("registrar");
+    irParaAba("resumo");
   } catch (erro) {
     erroEl.textContent = erro.message;
     erroEl.hidden = false;
@@ -186,7 +188,8 @@ function irParaAba(nome) {
   });
   if (nome === "resumo") carregarResumo();
   if (nome === "painel") carregarPainel();
-  if (nome === "futuro") carregarFuturo();
+  if (nome === "dre-futuro") carregarDreFuturo();
+  if (nome === "dre-anterior") carregarDreAnterior();
   if (nome === "historico") carregarHistorico();
   if (nome === "perguntar" && estado.historicoChat.length === 0) {
     renderizarMensagemAssistente("Pergunte o que quiser sobre seus gastos — ex: \"quanto gastei em mercado esse mês?\"");
@@ -197,78 +200,6 @@ document.querySelectorAll(".aba-botao").forEach((botao) => {
   botao.addEventListener("click", () => irParaAba(botao.dataset.aba));
 });
 
-// ---------------------------------------------------------------------------
-// registrar
-// ---------------------------------------------------------------------------
-
-document.getElementById("form-registrar").addEventListener("submit", async (evento) => {
-  evento.preventDefault();
-  const campo = document.getElementById("campo-texto");
-  const botao = document.getElementById("botao-registrar");
-  const status = document.getElementById("registrar-status");
-  const texto = campo.value.trim();
-  if (!texto) return;
-
-  botao.disabled = true;
-  botao.textContent = "Registrando...";
-  status.textContent = "";
-
-  try {
-    const resultado = await api("/api/registrar", {
-      method: "POST",
-      body: JSON.stringify({ texto }),
-    });
-    if (!resultado.grupos.length) {
-      status.innerHTML = "";
-      status.appendChild(el("p", { class: "texto-fraco", texto: resultado.observacao || "não identifiquei nenhum lançamento nessa mensagem." }));
-    } else {
-      campo.value = "";
-      resultado.grupos.forEach((grupo) => adicionarItemRegistrado(grupo));
-    }
-  } catch (erro) {
-    if (erro.status !== 401) {
-      status.innerHTML = "";
-      status.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
-    }
-  } finally {
-    botao.disabled = false;
-    botao.textContent = "Registrar";
-  }
-});
-
-function adicionarItemRegistrado(grupo) {
-  const lista = document.getElementById("registrar-lista");
-  const primeira = grupo.linhas[0];
-  const totalParcelas = primeira.totalParcelas;
-
-  const linhaValor = totalParcelas > 1
-    ? `${formatarMoeda(primeira.valorTotal)} em ${totalParcelas}x de ${formatarMoeda(primeira.valor)}`
-    : formatarMoeda(primeira.valor);
-
-  const item = el("div", { class: "item-lancamento" }, [
-    el("div", { class: "detalhe" }, [
-      el("span", { class: "descricao", texto: primeira.descricao || "(sem descrição)" }),
-      el("span", { class: "meta", texto: `${primeira.categoria} · ${primeira.formaPagamento}${primeira.conta ? " · " + primeira.conta : ""} · ${formatarDataCurta(primeira.data)}` }),
-    ]),
-    el("span", { class: `valor ${primeira.tipo === "Despesa" ? "despesa" : "receita"}`, texto: linhaValor }),
-    el("button", {
-      class: "remover", texto: "desfazer",
-      onclick: async () => {
-        try {
-          const grupoParcelamento = primeira.grupoParcelamento;
-          const url = grupoParcelamento
-            ? `/api/lancamentos/${primeira.id}?grupo=1`
-            : `/api/lancamentos/${primeira.id}`;
-          await api(url, { method: "DELETE" });
-          item.remove();
-        } catch (erro) {
-          if (erro.status !== 401) alert(`não consegui desfazer: ${erro.message}`);
-        }
-      },
-    }),
-  ]);
-  lista.prepend(item);
-}
 
 // ---------------------------------------------------------------------------
 // resumo
@@ -439,52 +370,77 @@ function renderizarDre(container, bloco, meta, capex) {
 }
 
 // ---------------------------------------------------------------------------
-// futuro (compromissos já certos nos próximos ciclos)
+// DRE futuro (navegável mês a mês, projeção completa por categoria)
 // ---------------------------------------------------------------------------
 
-async function carregarFuturo() {
-  const resumoContainer = document.getElementById("futuro-resumo-cartao");
-  const listaContainer = document.getElementById("futuro-lista");
-  resumoContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
-  listaContainer.innerHTML = "";
-  try {
-    const dados = await api("/api/compromissos-futuros?meses=6");
-    const ultimo = dados[dados.length - 1];
-    resumoContainer.innerHTML = "";
-    resumoContainer.appendChild(el("span", { class: "meta-rotulo", texto: `Reserva esperada em ${dados.length} ciclos` }));
-    resumoContainer.appendChild(el("div", {
-      class: `futuro-acumulado ${ultimo.acumulado >= 0 ? "receita" : "despesa"}`,
-      texto: formatarMoeda(ultimo.acumulado),
-    }));
-    resumoContainer.appendChild(el("p", { class: "texto-fraco",
-      texto: "receita esperada menos o que já é certo (parcelas + dívidas cadastradas) e menos o gasto recorrente típico (média histórica) — não é o orçamento inteiro, é o que você costuma gastar de verdade." }));
+function diferencaMeses(de, para) {
+  const [a1, m1] = de.split("-").map(Number);
+  const [a2, m2] = para.split("-").map(Number);
+  return (a2 - a1) * 12 + (m2 - m1);
+}
 
-    listaContainer.innerHTML = "";
-    dados.forEach((item) => {
-      const positivo = item.saldoEsperado >= 0;
-      listaContainer.appendChild(el("div", { class: "cartao futuro-item" }, [
-        el("div", { class: "futuro-topo" }, [
-          el("span", { class: "categoria", texto: rotuloMes(item.ciclo) }),
-          el("span", { class: `valor ${positivo ? "receita" : "despesa"}`, texto: formatarMoeda(item.saldoEsperado) }),
-        ]),
-        el("div", { class: "futuro-detalhe texto-fraco" }, [
-          el("span", { texto: `receita esperada: ${formatarMoeda(item.receitaEsperada)}` }),
-        ]),
-        el("div", { class: "futuro-detalhe texto-fraco" }, [
-          el("span", { texto: `(−) comprometido certo (parcelas + dívidas): ${formatarMoeda(item.compromissosCertos)}` }),
-        ]),
-        el("div", { class: "futuro-detalhe texto-fraco" }, [
-          el("span", { texto: `(−) gasto recorrente típico: ${formatarMoeda(item.gastoRecorrenteEsperado)}` }),
-        ]),
-        el("div", { class: "futuro-acumulado-linha texto-fraco" }, [
-          el("span", { texto: `acumulado: ${formatarMoeda(item.acumulado)}` }),
-        ]),
-      ]));
-    });
+document.getElementById("dre-futuro-anterior").addEventListener("click", () => {
+  estado.mesDreFuturo = somarMes(estado.mesDreFuturo, -1);
+  carregarDreFuturo();
+});
+document.getElementById("dre-futuro-seguinte").addEventListener("click", () => {
+  estado.mesDreFuturo = somarMes(estado.mesDreFuturo, 1);
+  carregarDreFuturo();
+});
+
+async function carregarDreFuturo() {
+  document.getElementById("dre-futuro-rotulo").textContent = rotuloMes(estado.mesDreFuturo);
+  const dreContainer = document.getElementById("dre-futuro-cartao");
+  const acumuladoContainer = document.getElementById("dre-futuro-acumulado-cartao");
+  dreContainer.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  acumuladoContainer.innerHTML = "";
+  try {
+    const dre = await api(`/api/dre?mes=${estado.mesDreFuturo}`);
+    renderizarDre(dreContainer, dre.projetado, null, dre.capex);
+
+    const meses = Math.max(1, diferencaMeses(mesAtual(), estado.mesDreFuturo) + 1);
+    const compromissos = await api(`/api/compromissos-futuros?meses=${meses}`);
+    const item = compromissos.find((c) => c.ciclo === estado.mesDreFuturo);
+    acumuladoContainer.innerHTML = "";
+    if (item) {
+      acumuladoContainer.appendChild(el("span", { class: "meta-rotulo", texto: "Reserva acumulada esperada até esse ciclo" }));
+      acumuladoContainer.appendChild(el("div", {
+        class: `futuro-acumulado ${item.acumulado >= 0 ? "receita" : "despesa"}`,
+        texto: formatarMoeda(item.acumulado),
+      }));
+    }
   } catch (erro) {
     if (erro.status !== 401) {
-      resumoContainer.innerHTML = "";
-      resumoContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
+      dreContainer.innerHTML = "";
+      dreContainer.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DRE anterior (navegável mês a mês, ciclos já fechados)
+// ---------------------------------------------------------------------------
+
+document.getElementById("dre-anterior-anterior").addEventListener("click", () => {
+  estado.mesDreAnterior = somarMes(estado.mesDreAnterior, -1);
+  carregarDreAnterior();
+});
+document.getElementById("dre-anterior-seguinte").addEventListener("click", () => {
+  estado.mesDreAnterior = somarMes(estado.mesDreAnterior, 1);
+  carregarDreAnterior();
+});
+
+async function carregarDreAnterior() {
+  document.getElementById("dre-anterior-rotulo").textContent = rotuloMes(estado.mesDreAnterior);
+  const container = document.getElementById("dre-anterior-cartao");
+  container.innerHTML = `<p class="texto-fraco">carregando...</p>`;
+  try {
+    const dre = await api(`/api/dre?mes=${estado.mesDreAnterior}`);
+    renderizarDre(container, dre.realizado, null, dre.capex);
+  } catch (erro) {
+    if (erro.status !== 401) {
+      container.innerHTML = "";
+      container.appendChild(el("p", { class: "texto-erro", texto: erro.message }));
     }
   }
 }
