@@ -71,6 +71,11 @@ FUSO_HORARIO = os.environ.get("CADERNO_TIMEZONE", "America/Sao_Paulo")
 # ver `datas.ciclo_de`.
 DIA_FECHAMENTO_CICLO = int(os.environ.get("CADERNO_DIA_FECHAMENTO_CICLO", "27"))
 
+# Tópico do ntfy.sh pra notificação diária independente de sessão do Claude —
+# ver `notificador.py`. Tratado como segredo (quem souber o tópico pode ler
+# as notificações), nunca commitado em claro.
+NTFY_TOPICO = os.environ.get("CADERNO_NTFY_TOPICO")
+
 # Integração com o Meu Pluggy (Open Finance) — sincronização automática de
 # extrato bancário e investimentos. Client ID/Secret vêm de variável de
 # ambiente, nunca de arquivo versionado (são credenciais de acesso à conta

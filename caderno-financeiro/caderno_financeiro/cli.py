@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import auth, config, consulta, db, estatisticas, exportador, ia, importador, registro
+from . import auth, config, consulta, db, estatisticas, exportador, ia, importador, notificador, registro
 from . import pluggy_cliente as pc
 from . import pluggy_sync
 from . import upx_sync
@@ -751,6 +751,48 @@ def cmd_score(args) -> int:
     return 0
 
 
+def cmd_notificar(args) -> int:
+    with db.banco(args.banco) as conexao:
+        meta_texto = db.ler_config(conexao, "meta_poupanca_valor")
+        orcamentos = db.listar_orcamentos(conexao)
+        lancamentos = db.listar(conexao)
+
+        meta_valor = float(meta_texto) if meta_texto else None
+        resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
+
+        ciclo = resultado["poupanca"]["ciclo"]
+        for categoria in resultado["categoriasEmRiscoDeEstourar"]:
+            anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], ciclo)
+            notificar = anterior is None or categoria["projecao"] >= anterior * 1.2
+            categoria["notificarAgora"] = notificar
+            if notificar:
+                db.registrar_projecao_alertada(conexao, categoria["categoria"], ciclo, categoria["projecao"])
+
+    if not notificador.deve_notificar(resultado):
+        if args.json:
+            imprimir_json({"notificou": False, "resultado": resultado})
+        else:
+            print(pintar("nada chamando atenção hoje — não notificou.", VERDE))
+        return 0
+
+    mensagem = notificador.montar_mensagem(resultado)
+    topico = args.topico or config.NTFY_TOPICO
+    if args.simular:
+        print(pintar(f"(simulação) mandaria: {mensagem}", CINZA))
+        return 0
+    try:
+        notificador.enviar_ntfy(mensagem, topico)
+    except notificador.ErroNotificacao as erro:
+        print(pintar(f"erro: {erro}", VERMELHO))
+        return 1
+
+    if args.json:
+        imprimir_json({"notificou": True, "mensagem": mensagem, "resultado": resultado})
+    else:
+        print(pintar(f"notificado: {mensagem}", VERDE))
+    return 0
+
+
 def cmd_upx_sincronizar(args) -> int:
     with db.banco(args.banco) as conexao:
         try:
@@ -964,6 +1006,15 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--registrar-alertas", action="store_true",
                     help="marca categorias em risco como notificadas (uso pela rotina automática, evita repetir alerta)")
     p.set_defaults(funcao=cmd_score)
+
+    p = subcomandos.add_parser(
+        "notificar",
+        help="calcula o score do dia e manda notificação via ntfy.sh se houver sinal — independente de sessão do Claude",
+    )
+    p.add_argument("--topico", help="tópico do ntfy.sh (padrão: CADERNO_NTFY_TOPICO)")
+    p.add_argument("--simular", action="store_true", help="mostra a mensagem sem enviar")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(funcao=cmd_notificar)
 
     p = subcomandos.add_parser("investimentos", help="lista posições de investimento sincronizadas via Pluggy")
     p.add_argument("--json", action="store_true")
