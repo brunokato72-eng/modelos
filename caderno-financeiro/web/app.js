@@ -337,8 +337,8 @@ async function carregarPainel() {
 function renderizarDre(container, bloco, meta, capex) {
   container.innerHTML = "";
   container.appendChild(el("div", { class: "dre-linha dre-receita" }, [
-    el("span", { texto: "Receita bruta" }),
-    el("span", { class: "valor receita", texto: formatarMoeda(bloco.receitaBruta) }),
+    el("span", { texto: "Receita (salário)" }),
+    el("span", { class: "valor receita", texto: formatarMoeda(bloco.receitaSalario ?? bloco.receitaBruta) }),
   ]));
   bloco.despesasPorCategoria.forEach((item) => {
     container.appendChild(el("div", { class: "dre-linha" }, [
@@ -346,6 +346,17 @@ function renderizarDre(container, bloco, meta, capex) {
       el("span", { class: "valor despesa", texto: formatarMoeda(item.valor) }),
     ]));
   });
+  // "últimas linhas": entradas que não são a fonte de receita principal
+  // (reembolso, Pix de terceiros etc.) ficam separadas, perto do resultado,
+  // não misturadas com o salário lá em cima — pedido explícito do usuário.
+  if (bloco.outrasEntradas && bloco.outrasEntradas.length) {
+    bloco.outrasEntradas.forEach((item) => {
+      container.appendChild(el("div", { class: "dre-linha" }, [
+        el("span", { class: "texto-fraco", texto: `(+) ${item.categoria}` }),
+        el("span", { class: "valor receita texto-fraco", texto: formatarMoeda(item.valor) }),
+      ]));
+    });
+  }
   const positivo = bloco.resultadoLiquido >= 0;
   container.appendChild(el("div", { class: "dre-linha dre-resultado" }, [
     el("span", { texto: "Resultado líquido" }),

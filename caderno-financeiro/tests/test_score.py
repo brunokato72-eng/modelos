@@ -258,6 +258,24 @@ class TestDre(unittest.TestCase):
         self.assertIsNone(resultado["realizado"]["margemPercentual"])
 
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_salario_fica_separado_de_outras_entradas(self, _hoje):
+        # pedido explícito do usuário: "fonte de receita é só o salário" — Pix
+        # da esposa, reembolso etc. entram, mas não contam como receita
+        # principal, ficam numa linha separada no DRE.
+        orcamentos = []
+        lancamentos = [
+            _lanc("2026-09-01", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-02", 300, "Reembolso", tipo="Receita"),
+            _lanc("2026-09-03", 200, "Outras entradas", tipo="Receita"),
+            _lanc("2026-09-05", 1000, "Mercado"),
+        ]
+        resultado = estatisticas.dre(lancamentos, orcamentos, "2026-09")
+        self.assertEqual(resultado["realizado"]["receitaSalario"], 5000.0)
+        self.assertEqual(resultado["realizado"]["receitaBruta"], 5500.0)
+        outras = {c["categoria"]: c["valor"] for c in resultado["realizado"]["outrasEntradas"]}
+        self.assertEqual(outras, {"Reembolso": 300.0, "Outras entradas": 200.0})
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_devolucao_de_margem_nao_conta_como_receita_bruta(self, _hoje):
         orcamentos = []
         lancamentos = [

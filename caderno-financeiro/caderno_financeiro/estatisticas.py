@@ -324,13 +324,21 @@ def _dia_de_referencia(inicio: str, fim: str) -> tuple[str, int, int]:
     return somar_dias(inicio, -1), 0, dias_totais
 
 
-def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) -> float:
+CATEGORIA_SALARIO = "Salário"
+
+
+def _receita_esperada_ciclo(
+    lancamentos: Sequence[Dict[str, Any]], inicio: str, *, categoria: Optional[str] = None
+) -> float:
     """Mediana das receitas totais dos últimos 3 ciclos de fatura ANTERIORES a
     `inicio` que tiveram receita de verdade — pula ciclos vazios, igual
     `_media_historica_despesa_centavos` (necessário ao encadear vários ciclos
     futuros em `projecao_compromissos_futuros`). Salário chega de uma vez só,
     então "projetar pelo ritmo" não funciona pra receita como funciona pra
-    despesa."""
+    despesa.
+
+    `categoria` filtra pra uma categoria só (ex.: "Salário" separado do resto)
+    — usado pelo DRE pra não misturar receita principal com entrada avulsa."""
     totais = []
     inicio_alvo = inicio
     for _ in range(12):
@@ -343,6 +351,7 @@ def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) 
             if inicio_alvo <= (e.get("data") or "") <= fim_alvo
             and e.get("tipo") == config.TIPO_RECEITA
             and not _eh_ruido_de_margem(e)
+            and (categoria is None or e.get("categoria") == categoria)
         )
         if total:
             totais.append(total)
@@ -491,7 +500,26 @@ def dre(
     capex_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
     )
-    receita_bruta_centavos = sum(para_centavos(e.get("valor") or 0) for e in receitas_ciclo)
+
+    # Salário é a receita principal (fonte de renda de verdade); tudo mais —
+    # reembolso, Pix da esposa, qualquer outra entrada — é secundário e fica
+    # separado, não misturado na mesma linha (pedido explícito do usuário:
+    # "fonte de receita é só o salário", o resto entra mas não conta junto).
+    receita_salario_centavos = sum(
+        para_centavos(e.get("valor") or 0) for e in receitas_ciclo if e.get("categoria") == CATEGORIA_SALARIO
+    )
+    outras_entradas_por_categoria: Dict[str, int] = {}
+    for e in receitas_ciclo:
+        if e.get("categoria") == CATEGORIA_SALARIO:
+            continue
+        cat = e.get("categoria") or "Outras entradas"
+        outras_entradas_por_categoria[cat] = outras_entradas_por_categoria.get(cat, 0) + para_centavos(e.get("valor") or 0)
+    outras_entradas_centavos = sum(outras_entradas_por_categoria.values())
+    outras_entradas_realizado = sorted(
+        ({"categoria": c, "valor": para_reais(v)} for c, v in outras_entradas_por_categoria.items()),
+        key=lambda c: -c["valor"],
+    )
+    receita_bruta_centavos = receita_salario_centavos + outras_entradas_centavos
 
     categorias_operacionais = [c for c in config.CATEGORIAS_DESPESA if c != CATEGORIA_NEGOCIO]
 
@@ -511,6 +539,8 @@ def dre(
         round(resultado_liquido_centavos / receita_bruta_centavos * 100, 1) if receita_bruta_centavos else None
     )
     realizado = {
+        "receitaSalario": para_reais(receita_salario_centavos),
+        "outrasEntradas": outras_entradas_realizado,
         "receitaBruta": para_reais(receita_bruta_centavos),
         "despesasPorCategoria": despesas_realizado,
         "totalDespesas": para_reais(total_despesas_centavos),
@@ -518,7 +548,9 @@ def dre(
         "margemPercentual": margem,
     }
 
+    receita_esperada_salario = _receita_esperada_ciclo(lancamentos, inicio, categoria=CATEGORIA_SALARIO)
     receita_esperada = _receita_esperada_ciclo(lancamentos, inicio)
+    receita_esperada_outras = round(receita_esperada - receita_esperada_salario, 2)
     receita_esperada_centavos = para_centavos(receita_esperada)
     despesas_projetado = []
     total_projetado_centavos = 0
@@ -535,6 +567,8 @@ def dre(
         if receita_esperada_centavos else None
     )
     projetado = {
+        "receitaSalario": receita_esperada_salario,
+        "outrasEntradas": [{"categoria": "Outras entradas", "valor": receita_esperada_outras}] if receita_esperada_outras else [],
         "receitaBruta": receita_esperada,
         "despesasPorCategoria": despesas_projetado,
         "totalDespesas": para_reais(total_projetado_centavos),
