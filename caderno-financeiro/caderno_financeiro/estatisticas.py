@@ -12,15 +12,13 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import config
 from .calculadora import executar_calculo
 from .datas import (
-    ciclo_anterior,
-    ciclo_atual,
     ciclo_de,
-    ciclo_por_rotulo,
-    ciclo_seguinte,
-    dias_entre,
+    dias_no_mes,
     hoje_iso,
     mes_anterior,
     mes_atual,
+    mes_de,
+    mes_seguinte,
     rotulo_ciclo,
     somar_dias,
 )
@@ -34,20 +32,99 @@ def _quebra(lancamentos: Sequence[Dict[str, Any]], campo: str, tipo: str) -> Lis
     return resultado.get("grupos", [])
 
 
+CATEGORIA_SALARIO = "Salário"
+
+# Capex de negócio (ex.: entrada de franquia) não é gasto de estilo de vida —
+# some do cálculo de poupança projetada e dos sinais comportamentais, senão um
+# aporte pontual de milhares de reais faz o score ficar sempre crítico até o
+# capex terminar, o que não diz nada sobre o comportamento do usuário.
+CATEGORIA_NEGOCIO = "Negócio"
+
+# Lançamentos técnicos de corretora (cobertura de margem, aluguel de ações/BTC)
+# não são gasto nem renda de verdade — são ruído de liquidação que aparece tanto
+# como "Despesa" (tarifa, retirada de cobertura) quanto como "Receita"
+# (devolução de cobertura) na mesma categoria. Sem isso, o score e a poupança
+# projetada ficavam reagindo a dinheiro que nem saiu nem entrou de verdade.
+#
+# A regra é assimétrica entre Despesa e Receita, por pedido explícito do
+# usuário com dois casos reais:
+#   - Despesa: só o RUÍDO de margem é ignorado, não a categoria inteira — se
+#     o usuário precisa recomprar ações vendidas a descoberto, esse Pix é
+#     gasto de verdade (achado real: ~R$1.600) e tem que continuar contando.
+#   - Receita: a categoria inteira é ignorada, sempre — seja devolução de
+#     margem (ruído) ou produto de venda de ativo que ele já possuía (achado
+#     real: TED de R$8.571,37 veio de uma venda de ações, não é renda nova,
+#     é dinheiro que ele já tinha mudando de forma). Nenhuma entrada em
+#     "Investimento" é receita de verdade, só a Despesa tem o filtro fino.
+CATEGORIA_INVESTIMENTO = "Investimento"
+_PALAVRAS_RUIDO_MARGEM = ("margem", "empréstimo", "emprestimo", "btc", "emolumentos")
+
+
+def _eh_ruido_de_margem(lancamento: Dict[str, Any]) -> bool:
+    if lancamento.get("categoria") != CATEGORIA_INVESTIMENTO:
+        return False
+    descricao = (lancamento.get("descricao") or "").lower()
+    return any(palavra in descricao for palavra in _PALAVRAS_RUIDO_MARGEM)
+
+
+# "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
+# (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
+# próximos meses, sem usar o mecanismo de parcela do app) — pra efeito de
+# "o que já é certo" conta junto com parcela de verdade, não como gasto
+# recorrente estimado (senão esse valor entra duas vezes: uma na média
+# histórica, outra como compromisso certo do mês futuro específico).
+CATEGORIA_DIVIDAS = "Dívidas"
+
+
+def _eh_compromisso_certo(lancamento: Dict[str, Any]) -> bool:
+    return (lancamento.get("totalParcelas") or 1) > 1 or lancamento.get("categoria") == CATEGORIA_DIVIDAS
+
+
+# Em que mês (AAAA-MM) um lançamento conta de verdade — não necessariamente o
+# mês da data bruta. Achado conferindo contra holerite real (ver conversa):
+#   - Receita "Salário": sempre o mês SEGUINTE ao mês do pagamento — quem
+#     recebe adiantamento (dia ~15) + saldo (fim do mês) em julho está
+#     recebendo "o salário de agosto" (é o dinheiro que financia agosto).
+#     Exceção: 13º e férias NÃO deslocam, ficam no mês em que foram pagos de
+#     verdade — como o banco não diferencia isso automaticamente (a descrição
+#     é sempre a mesma "Transferência Recebida" genérica), essa exceção só dá
+#     pra aplicar manualmente, por lançamento, via `mesReferenciaManual`.
+#   - Despesa no cartão de crédito: o mês em que a FATURA é PAGA, não o mês
+#     em que a compra foi feita — uma compra na fatura que fecha 27/jul é
+#     paga em agosto, então conta como gasto de agosto (mesmo critério do
+#     salário: o mês cujo dinheiro disponível cobriu aquilo).
+#   - Qualquer outra coisa (Pix, débito, dinheiro, VR, demais receitas): mês
+#     calendário da própria data, sem deslocar nada.
+def mes_referencia(lancamento: Dict[str, Any]) -> str:
+    manual = lancamento.get("mesReferenciaManual")
+    if manual:
+        return manual
+    data = lancamento.get("data") or ""
+    if lancamento.get("tipo") == config.TIPO_RECEITA and lancamento.get("categoria") == CATEGORIA_SALARIO:
+        return mes_seguinte(mes_de(data))
+    if lancamento.get("tipo") == config.TIPO_DESPESA and lancamento.get("formaPagamento") == "Cartão de crédito":
+        _, fim_fatura = ciclo_de(data)
+        return mes_seguinte(rotulo_ciclo(fim_fatura))
+    return mes_de(data)
+
+
+def _do_mes(lancamentos: Sequence[Dict[str, Any]], mes: str) -> List[Dict[str, Any]]:
+    return [e for e in lancamentos if mes_referencia(e) == mes]
+
+
 def resumo_mensal(
     lancamentos: Sequence[Dict[str, Any]],
-    rotulo: Optional[str] = None,
+    mes: Optional[str] = None,
     *,
     incluir_comparacao: bool = True,
 ) -> Dict[str, Any]:
-    """Resumo do ciclo de fatura (fecha dia 27) cujo rótulo (AAAA-MM do
-    fechamento) é `rotulo` — padrão é o ciclo corrente."""
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
-    mes = rotulo_ciclo(fim)
-    do_ciclo = [e for e in lancamentos if inicio <= (e.get("data") or "") <= fim]
+    """Resumo do mês de referência (ver `mes_referencia`) — padrão é o mês
+    corrente."""
+    mes = mes or mes_atual()
+    do_mes = _do_mes(lancamentos, mes)
 
-    despesas = [e for e in do_ciclo if e.get("tipo") == config.TIPO_DESPESA]
-    receitas = [e for e in do_ciclo if e.get("tipo") == config.TIPO_RECEITA]
+    despesas = [e for e in do_mes if e.get("tipo") == config.TIPO_DESPESA]
+    receitas = [e for e in do_mes if e.get("tipo") == config.TIPO_RECEITA]
     total_despesas = sum(para_centavos(e.get("valor") or 0) for e in despesas)
     total_receitas = sum(para_centavos(e.get("valor") or 0) for e in receitas)
 
@@ -56,13 +133,13 @@ def resumo_mensal(
         "totalDespesas": para_reais(total_despesas),
         "totalReceitas": para_reais(total_receitas),
         "saldo": para_reais(total_receitas - total_despesas),
-        "quantidadeLancamentos": len(do_ciclo),
+        "quantidadeLancamentos": len(do_mes),
         "quantidadeDespesas": len(despesas),
         "ticketMedioDespesa": para_reais(round(total_despesas / len(despesas))) if despesas else 0.0,
-        "porCategoria": _quebra(do_ciclo, "categoria", config.TIPO_DESPESA),
-        "porFormaPagamento": _quebra(do_ciclo, "formapagamento", config.TIPO_DESPESA),
-        "porConta": _quebra(do_ciclo, "conta", config.TIPO_DESPESA),
-        "receitasPorCategoria": _quebra(do_ciclo, "categoria", config.TIPO_RECEITA),
+        "porCategoria": _quebra(do_mes, "categoria", config.TIPO_DESPESA),
+        "porFormaPagamento": _quebra(do_mes, "formapagamento", config.TIPO_DESPESA),
+        "porConta": _quebra(do_mes, "conta", config.TIPO_DESPESA),
+        "receitasPorCategoria": _quebra(do_mes, "categoria", config.TIPO_RECEITA),
         "comprometidoParcelas": para_reais(
             sum(
                 para_centavos(e.get("valor") or 0)
@@ -73,17 +150,17 @@ def resumo_mensal(
     }
 
     if incluir_comparacao:
-        inicio_ant, fim_ant = ciclo_anterior(inicio)
+        mes_ant = mes_anterior(mes)
         despesas_anteriores = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_ant <= (e.get("data") or "") <= fim_ant and e.get("tipo") == config.TIPO_DESPESA
+            for e in _do_mes(lancamentos, mes_ant)
+            if e.get("tipo") == config.TIPO_DESPESA
         )
         variacao = None
         if despesas_anteriores:
             variacao = round((total_despesas - despesas_anteriores) / despesas_anteriores * 100, 1)
         resumo["mesAnterior"] = {
-            "mes": rotulo_ciclo(fim_ant),
+            "mes": mes_ant,
             "totalDespesas": para_reais(despesas_anteriores),
             "variacaoPercentual": variacao,
             "diferenca": para_reais(total_despesas - despesas_anteriores),
@@ -92,36 +169,34 @@ def resumo_mensal(
     return resumo
 
 
-def parcelas_futuras(lancamentos: Sequence[Dict[str, Any]], rotulo_referencia: Optional[str] = None,
+def parcelas_futuras(lancamentos: Sequence[Dict[str, Any]], mes_referencia_base: Optional[str] = None,
                      meses: int = 6) -> List[Dict[str, Any]]:
-    """Quanto já está comprometido nos próximos ciclos por conta de parcelamentos."""
-    _, fim = ciclo_por_rotulo(rotulo_referencia) if rotulo_referencia else ciclo_atual()
+    """Quanto já está comprometido nos próximos meses por conta de parcelamentos."""
+    mes = mes_referencia_base or mes_atual()
     saida = []
     for _ in range(meses):
-        inicio_alvo, fim = ciclo_seguinte(fim)
+        mes = mes_seguinte(mes)
         total = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim
-            and e.get("tipo") == config.TIPO_DESPESA
+            for e in _do_mes(lancamentos, mes)
+            if e.get("tipo") == config.TIPO_DESPESA
             and (e.get("totalParcelas") or 1) > 1
         )
-        saida.append({"mes": rotulo_ciclo(fim), "totalParcelas": para_reais(total)})
+        saida.append({"mes": mes, "totalParcelas": para_reais(total)})
     return saida
 
 
 def progresso_orcamentos(
     lancamentos: Sequence[Dict[str, Any]],
     orcamentos: Sequence[Dict[str, Any]],
-    rotulo: Optional[str] = None,
+    mes: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Quanto já foi gasto em cada categoria com orçamento, no ciclo de fatura
-    (fecha dia 27 — ver `datas.ciclo_de`), vs o limite."""
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    """Quanto já foi gasto em cada categoria com orçamento, no mês de
+    referência (ver `mes_referencia`), vs o limite."""
+    mes = mes or mes_atual()
     gasto_por_categoria: Dict[str, int] = {}
-    for lanc in lancamentos:
-        data = lanc.get("data") or ""
-        if lanc.get("tipo") != config.TIPO_DESPESA or not (inicio <= data <= fim):
+    for lanc in _do_mes(lancamentos, mes):
+        if lanc.get("tipo") != config.TIPO_DESPESA:
             continue
         categoria = lanc.get("categoria")
         gasto_por_categoria[categoria] = gasto_por_categoria.get(categoria, 0) + para_centavos(lanc.get("valor") or 0)
@@ -145,22 +220,21 @@ def progresso_orcamentos(
 # desconta por sinais concretos (poupança baixa/negativa, despesas subindo,
 # parcelas futuras pesando demais na receita). É uma régua simples, não um
 # veredito: os `alertas` explicam exatamente de onde veio cada desconto.
-def saude_financeira(lancamentos: Sequence[Dict[str, Any]], rotulo: Optional[str] = None) -> Dict[str, Any]:
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
-    mes = rotulo_ciclo(fim)
+def saude_financeira(lancamentos: Sequence[Dict[str, Any]], mes: Optional[str] = None) -> Dict[str, Any]:
+    mes = mes or mes_atual()
     resumo = resumo_mensal(lancamentos, mes, incluir_comparacao=False)
     receitas, despesas = resumo["totalReceitas"], resumo["totalDespesas"]
 
     taxa_poupanca = round(resumo["saldo"] / receitas * 100, 1) if receitas else None
 
     totais_meses_anteriores = []
-    inicio_alvo = inicio
+    mes_alvo = mes
     for _ in range(3):
-        inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
+        mes_alvo = mes_anterior(mes_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim_alvo and e.get("tipo") == config.TIPO_DESPESA
+            for e in _do_mes(lancamentos, mes_alvo)
+            if e.get("tipo") == config.TIPO_DESPESA
         )
         if total:
             totais_meses_anteriores.append(total)
@@ -216,30 +290,30 @@ def saude_financeira(lancamentos: Sequence[Dict[str, Any]], rotulo: Optional[str
 # skins de jogo, assinaturas via checkout de terceiro cobradas na fatura da Apple).
 GATILHOS_IMPULSO = ("apple.com/bill", "lastlink")
 
+
 def _media_historica_despesa_centavos(
-    lancamentos: Sequence[Dict[str, Any]], inicio: str, categoria: Optional[str] = None,
+    lancamentos: Sequence[Dict[str, Any]], mes: str, categoria: Optional[str] = None,
     *, excluir_compromissos_certos: bool = False,
 ) -> Optional[int]:
-    """Média dos últimos 3 ciclos de fatura ANTERIORES a `inicio` que tiveram
-    gasto de verdade — pula ciclos vazios (relevante ao encadear vários ciclos
-    futuros, onde os mais próximos ainda não têm nenhum lançamento real) em
-    vez de parar nos 3 primeiros e arriscar não achar nenhum dado.
+    """Média dos últimos 3 meses ANTERIORES a `mes` que tiveram gasto de
+    verdade — pula meses vazios (relevante ao encadear vários meses futuros,
+    onde os mais próximos ainda não têm nenhum lançamento real) em vez de
+    parar nos 3 primeiros e arriscar não achar nenhum dado.
 
     `excluir_compromissos_certos=True` tira parcelas e "Dívidas" da média —
     usado em `projecao_compromissos_futuros`, que já soma esses compromissos
-    certos de cada ciclo futuro à parte; sem isso, um valor entraria na média
-    E de novo como "certo" do ciclo futuro, contando duas vezes."""
+    certos de cada mês futuro à parte; sem isso, um valor entraria na média
+    E de novo como "certo" do mês futuro específico, contando duas vezes."""
     totais = []
-    inicio_alvo = inicio
+    mes_alvo = mes
     for _ in range(12):
         if len(totais) >= 3:
             break
-        inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
+        mes_alvo = mes_anterior(mes_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim_alvo
-            and e.get("tipo") == config.TIPO_DESPESA
+            for e in _do_mes(lancamentos, mes_alvo)
+            if e.get("tipo") == config.TIPO_DESPESA
             and e.get("categoria") != CATEGORIA_NEGOCIO
             and not _eh_ruido_de_margem(e)
             and (categoria is None or e.get("categoria") == categoria)
@@ -267,77 +341,33 @@ def _projetar_com_shrinkage(
     return round(peso * ritmo_centavos + (1 - peso) * media_historica_centavos)
 
 
-# Capex de negócio (ex.: entrada de franquia) não é gasto de estilo de vida —
-# some do cálculo de poupança projetada e dos sinais comportamentais, senão um
-# aporte pontual de milhares de reais faz o score ficar sempre crítico até o
-# capex terminar, o que não diz nada sobre o comportamento do usuário.
-CATEGORIA_NEGOCIO = "Negócio"
-
-# Lançamentos técnicos de corretora (cobertura de margem, aluguel de ações/BTC)
-# não são gasto nem renda de verdade — são ruído de liquidação que aparece tanto
-# como "Despesa" (tarifa, retirada de cobertura) quanto como "Receita"
-# (devolução de cobertura) na mesma categoria. Sem isso, o score e a poupança
-# projetada ficavam reagindo a dinheiro que nem saiu nem entrou de verdade.
-#
-# A regra é assimétrica entre Despesa e Receita, por pedido explícito do
-# usuário com dois casos reais:
-#   - Despesa: só o RUÍDO de margem é ignorado, não a categoria inteira — se
-#     o usuário precisa recomprar ações vendidas a descoberto, esse Pix é
-#     gasto de verdade (achado real: ~R$1.600) e tem que continuar contando.
-#   - Receita: a categoria inteira é ignorada, sempre — seja devolução de
-#     margem (ruído) ou produto de venda de ativo que ele já possuía (achado
-#     real: TED de R$8.571,37 veio de uma venda de ações, não é renda nova,
-#     é dinheiro que ele já tinha mudando de forma). Nenhuma entrada em
-#     "Investimento" é receita de verdade, só a Despesa tem o filtro fino.
-CATEGORIA_INVESTIMENTO = "Investimento"
-_PALAVRAS_RUIDO_MARGEM = ("margem", "empréstimo", "emprestimo", "btc", "emolumentos")
-
-
-def _eh_ruido_de_margem(lancamento: Dict[str, Any]) -> bool:
-    if lancamento.get("categoria") != CATEGORIA_INVESTIMENTO:
-        return False
-    descricao = (lancamento.get("descricao") or "").lower()
-    return any(palavra in descricao for palavra in _PALAVRAS_RUIDO_MARGEM)
-
-# "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
-# (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
-# próximos meses, sem usar o mecanismo de parcela do app) — pra efeito de
-# "o que já é certo" conta junto com parcela de verdade, não como gasto
-# recorrente estimado (senão esse valor entra duas vezes: uma na média
-# histórica, outra como compromisso certo do ciclo futuro específico).
-CATEGORIA_DIVIDAS = "Dívidas"
-
-
-def _eh_compromisso_certo(lancamento: Dict[str, Any]) -> bool:
-    return (lancamento.get("totalParcelas") or 1) > 1 or lancamento.get("categoria") == CATEGORIA_DIVIDAS
-
-
-def _dia_de_referencia(inicio: str, fim: str) -> tuple[str, int, int]:
-    """(data de referência, dia do ciclo já decorrido, dias totais do ciclo).
-
-    Pro ciclo corrente usa hoje; pro ciclo já fechado considera ele inteiro
-    decorrido (não faz sentido "projetar" um ciclo que já acabou); pro ciclo
-    que ainda nem começou, dia_atual=0 — sem ritmo nenhum pra usar, a
-    projeção (via `_projetar_com_shrinkage`) parte 100% da média histórica,
-    só respeitando o piso do que já estiver cadastrado como certo."""
+# Janela de tempo usada SÓ pra calcular o ritmo (quanto do mês já passou) —
+# simplificação temporária: usa o mês calendário pra tudo, inclusive despesa
+# de cartão (cuja fatura pode fechar num dia diferente do calendário). A
+# projeção por ritmo pode ficar um pouco imprecisa logo nos primeiros dias de
+# um mês até isso ser refinado; decisão explícita do usuário de adiar esse
+# refinamento e focar primeiro em deixar o "realizado" (o que já aconteceu)
+# correto — ver `mes_referencia`.
+def _dia_de_referencia(mes: str) -> tuple[int, int]:
+    """(dia do mês já decorrido, dias totais do mês). Mês corrente usa hoje;
+    mês já fechado considera ele inteiro decorrido; mês futuro usa 0 (sem
+    ritmo nenhum, a projeção parte 100% da média histórica)."""
     hoje = hoje_iso()
-    dias_totais = dias_entre(inicio, fim) + 1
-    if inicio <= hoje <= fim:
-        return hoje, dias_entre(inicio, hoje) + 1, dias_totais
-    if hoje > fim:
-        return fim, dias_totais, dias_totais
-    return somar_dias(inicio, -1), 0, dias_totais
+    dias_totais = dias_no_mes(mes)
+    mes_hoje = mes_de(hoje)
+    if mes_hoje == mes:
+        return int(hoje[8:10]), dias_totais
+    if mes_hoje > mes:
+        return dias_totais, dias_totais
+    return 0, dias_totais
 
 
-CATEGORIA_SALARIO = "Salário"
-
-
-def _receita_esperada_ciclo(
-    lancamentos: Sequence[Dict[str, Any]], inicio: str, *, categoria: Optional[str] = None
+def _receita_esperada_mes(
+    lancamentos: Sequence[Dict[str, Any]], mes: str, *, categoria: Optional[str] = None
 ) -> float:
-    """Mediana das receitas totais dos últimos 3 ciclos de fatura ANTERIORES a
-    `inicio` que tiveram receita de verdade — pula ciclos vazios, igual
-    `_media_historica_despesa_centavos` (necessário ao encadear vários ciclos
+    """Mediana das receitas totais dos últimos 3 meses ANTERIORES a `mes` que
+    tiveram receita de verdade — pula meses vazios, igual
+    `_media_historica_despesa_centavos` (necessário ao encadear vários meses
     futuros em `projecao_compromissos_futuros`). Salário chega de uma vez só,
     então "projetar pelo ritmo" não funciona pra receita como funciona pra
     despesa.
@@ -345,16 +375,15 @@ def _receita_esperada_ciclo(
     `categoria` filtra pra uma categoria só (ex.: "Salário" separado do resto)
     — usado pelo DRE pra não misturar receita principal com entrada avulsa."""
     totais = []
-    inicio_alvo = inicio
+    mes_alvo = mes
     for _ in range(12):
         if len(totais) >= 3:
             break
-        inicio_alvo, fim_alvo = ciclo_anterior(inicio_alvo)
+        mes_alvo = mes_anterior(mes_alvo)
         total = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim_alvo
-            and e.get("tipo") == config.TIPO_RECEITA
+            for e in _do_mes(lancamentos, mes_alvo)
+            if e.get("tipo") == config.TIPO_RECEITA
             and e.get("categoria") != CATEGORIA_INVESTIMENTO
             and (categoria is None or e.get("categoria") == categoria)
         )
@@ -372,34 +401,32 @@ def projecao_categoria(
     lancamentos: Sequence[Dict[str, Any]],
     categoria: str,
     limite: Optional[float],
-    inicio: str,
-    fim: str,
+    mes: str,
 ) -> Dict[str, Any]:
-    """Projeta o total do ciclo de fatura numa categoria pelo ritmo de gasto até
-    agora (regra de três simples, não regressão de verdade — não precisa de mais).
+    """Projeta o total do mês numa categoria pelo ritmo de gasto até agora
+    (regra de três simples, não regressão de verdade — não precisa de mais).
 
-    Parcelas futuras já cadastradas no ciclo (datadas depois de hoje) são gasto
+    Parcelas futuras já cadastradas no mês (datadas depois de hoje) são gasto
     CERTO, não estimativa — contá-las dentro do "até agora" e multiplicar de
     novo pelo ritmo inflava a projeção em cima do que já era sabido."""
-    data_referencia, dia_atual, dias_totais = _dia_de_referencia(inicio, fim)
-    despesas_categoria_ciclo = [
-        e for e in lancamentos
-        if e.get("tipo") == config.TIPO_DESPESA
-        and e.get("categoria") == categoria
-        and inicio <= (e.get("data") or "") <= fim
+    dia_atual, dias_totais = _dia_de_referencia(mes)
+    data_referencia = f"{mes}-{dia_atual:02d}" if dia_atual else mes_anterior(mes) + "-31"
+    despesas_categoria_mes = [
+        e for e in _do_mes(lancamentos, mes)
+        if e.get("tipo") == config.TIPO_DESPESA and e.get("categoria") == categoria
     ]
     gasto_ate_hoje_centavos = sum(
         para_centavos(e.get("valor") or 0)
-        for e in despesas_categoria_ciclo
+        for e in despesas_categoria_mes
         if (e.get("data") or "") <= data_referencia
     )
     gasto_total_conhecido_centavos = sum(
-        para_centavos(e.get("valor") or 0) for e in despesas_categoria_ciclo
+        para_centavos(e.get("valor") or 0) for e in despesas_categoria_mes
     )
     ritmo_centavos = (
         round(gasto_ate_hoje_centavos / dia_atual * dias_totais) if dia_atual else gasto_ate_hoje_centavos
     )
-    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, inicio, categoria)
+    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes, categoria)
     projecao_ritmo_centavos = _projetar_com_shrinkage(ritmo_centavos, dia_atual, dias_totais, media_historica_centavos)
     # a projeção nunca fica abaixo do que já é certo (parcelas futuras já cadastradas)
     projecao_centavos = max(projecao_ritmo_centavos, gasto_total_conhecido_centavos)
@@ -409,7 +436,7 @@ def projecao_categoria(
         "gasto": para_reais(gasto_total_conhecido_centavos),
         "projecao": para_reais(projecao_centavos),
         "limite": limite,
-        # gasto > 0 exige pelo menos 1 lançamento real no ciclo — sem isso a
+        # gasto > 0 exige pelo menos 1 lançamento real no mês — sem isso a
         # "projeção" é só a média histórica puxando sozinha, não comportamento de hoje.
         "vaiEstourar": (
             limite_centavos is not None
@@ -422,52 +449,50 @@ def projecao_categoria(
 def projecao_orcamentos(
     lancamentos: Sequence[Dict[str, Any]],
     orcamentos: Sequence[Dict[str, Any]],
-    rotulo: Optional[str] = None,
+    mes: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    mes = mes or mes_atual()
     projecoes = [
-        projecao_categoria(lancamentos, o["categoria"], o["limite"], inicio, fim) for o in orcamentos
+        projecao_categoria(lancamentos, o["categoria"], o["limite"], mes) for o in orcamentos
     ]
     return sorted(projecoes, key=lambda p: (not p["vaiEstourar"], -p["projecao"]))
 
 
 def projecao_poupanca(
     lancamentos: Sequence[Dict[str, Any]],
-    rotulo: Optional[str] = None,
+    mes: Optional[str] = None,
     meta_valor: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Poupança projetada até o fim do ciclo de fatura vs a meta definida — é o
-    elo entre o score do dia e "quanto eu quero economizar"."""
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
-    data_referencia, dia_atual, dias_totais = _dia_de_referencia(inicio, fim)
+    """Poupança projetada até o fim do mês vs a meta definida — é o elo entre
+    o score do dia e "quanto eu quero economizar"."""
+    mes = mes or mes_atual()
+    dia_atual, dias_totais = _dia_de_referencia(mes)
+    data_referencia = f"{mes}-{dia_atual:02d}" if dia_atual else mes_anterior(mes) + "-31"
 
-    despesas_ciclo = [
-        e for e in lancamentos
+    despesas_mes = [
+        e for e in _do_mes(lancamentos, mes)
         if e.get("tipo") == config.TIPO_DESPESA
-        and inicio <= (e.get("data") or "") <= fim
         and e.get("categoria") != CATEGORIA_NEGOCIO
         and not _eh_ruido_de_margem(e)
     ]
     despesas_ate_agora_centavos = sum(
-        para_centavos(e.get("valor") or 0) for e in despesas_ciclo if (e.get("data") or "") <= data_referencia
+        para_centavos(e.get("valor") or 0) for e in despesas_mes if (e.get("data") or "") <= data_referencia
     )
-    despesas_total_conhecido_centavos = sum(para_centavos(e.get("valor") or 0) for e in despesas_ciclo)
+    despesas_total_conhecido_centavos = sum(para_centavos(e.get("valor") or 0) for e in despesas_mes)
     ritmo_despesa_centavos = (
         round(despesas_ate_agora_centavos / dia_atual * dias_totais) if dia_atual else despesas_ate_agora_centavos
     )
-    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, inicio)
+    media_historica_centavos = _media_historica_despesa_centavos(lancamentos, mes)
     despesa_projetada_ritmo_centavos = _projetar_com_shrinkage(
         ritmo_despesa_centavos, dia_atual, dias_totais, media_historica_centavos
     )
-    # nunca abaixo do que já é certo (parcelas futuras já cadastradas no ciclo)
+    # nunca abaixo do que já é certo (parcelas futuras já cadastradas no mês)
     despesa_projetada_centavos = max(despesa_projetada_ritmo_centavos, despesas_total_conhecido_centavos)
-    receita_esperada = _receita_esperada_ciclo(lancamentos, inicio)
+    receita_esperada = _receita_esperada_mes(lancamentos, mes)
     poupanca_projetada = receita_esperada - para_reais(despesa_projetada_centavos)
 
     resultado: Dict[str, Any] = {
-        "ciclo": rotulo_ciclo(fim),
-        "inicio": inicio,
-        "fim": fim,
+        "mes": mes,
         "receitaEsperada": receita_esperada,
         "despesaProjetada": para_reais(despesa_projetada_centavos),
         "poupancaProjetada": round(poupanca_projetada, 2),
@@ -483,27 +508,24 @@ def projecao_poupanca(
 def dre(
     lancamentos: Sequence[Dict[str, Any]],
     orcamentos: Sequence[Dict[str, Any]],
-    rotulo: Optional[str] = None,
+    mes: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """DRE pessoal do ciclo de fatura: receita bruta, despesas por categoria,
-    resultado líquido e margem (resultado/receita) — "realizado" com o que já
-    aconteceu, "projetado" usando a mesma projeção por categoria do score/meta.
-    Capex de negócio sai à parte (não é despesa operacional)."""
-    inicio, fim = ciclo_por_rotulo(rotulo) if rotulo else ciclo_atual()
+    """DRE pessoal do mês de referência (ver `mes_referencia`): receita bruta,
+    despesas por categoria, resultado líquido e margem (resultado/receita) —
+    "realizado" com o que já aconteceu, "projetado" usando a mesma projeção
+    por categoria do score/meta. Capex de negócio sai à parte (não é despesa
+    operacional)."""
+    mes = mes or mes_atual()
     limite_por_categoria = {o["categoria"]: o["limite"] for o in orcamentos}
 
-    despesas_ciclo = [
-        e for e in lancamentos
-        if e.get("tipo") == config.TIPO_DESPESA and inicio <= (e.get("data") or "") <= fim
-    ]
-    receitas_ciclo = [
-        e for e in lancamentos
-        if e.get("tipo") == config.TIPO_RECEITA
-        and inicio <= (e.get("data") or "") <= fim
-        and e.get("categoria") != CATEGORIA_INVESTIMENTO
+    do_mes = _do_mes(lancamentos, mes)
+    despesas_mes = [e for e in do_mes if e.get("tipo") == config.TIPO_DESPESA]
+    receitas_mes = [
+        e for e in do_mes
+        if e.get("tipo") == config.TIPO_RECEITA and e.get("categoria") != CATEGORIA_INVESTIMENTO
     ]
     capex_centavos = sum(
-        para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
+        para_centavos(e.get("valor") or 0) for e in despesas_mes if e.get("categoria") == CATEGORIA_NEGOCIO
     )
 
     # Salário é a receita principal (fonte de renda de verdade); tudo mais —
@@ -511,10 +533,10 @@ def dre(
     # separado, não misturado na mesma linha (pedido explícito do usuário:
     # "fonte de receita é só o salário", o resto entra mas não conta junto).
     receita_salario_centavos = sum(
-        para_centavos(e.get("valor") or 0) for e in receitas_ciclo if e.get("categoria") == CATEGORIA_SALARIO
+        para_centavos(e.get("valor") or 0) for e in receitas_mes if e.get("categoria") == CATEGORIA_SALARIO
     )
     outras_entradas_por_categoria: Dict[str, int] = {}
-    for e in receitas_ciclo:
+    for e in receitas_mes:
         if e.get("categoria") == CATEGORIA_SALARIO:
             continue
         cat = e.get("categoria") or "Outras entradas"
@@ -532,7 +554,7 @@ def dre(
     total_despesas_centavos = 0
     for categoria in categorias_operacionais:
         valor_centavos = sum(
-            para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == categoria
+            para_centavos(e.get("valor") or 0) for e in despesas_mes if e.get("categoria") == categoria
         )
         if valor_centavos:
             despesas_realizado.append({"categoria": categoria, "valor": para_reais(valor_centavos)})
@@ -553,14 +575,14 @@ def dre(
         "margemPercentual": margem,
     }
 
-    receita_esperada_salario = _receita_esperada_ciclo(lancamentos, inicio, categoria=CATEGORIA_SALARIO)
-    receita_esperada = _receita_esperada_ciclo(lancamentos, inicio)
+    receita_esperada_salario = _receita_esperada_mes(lancamentos, mes, categoria=CATEGORIA_SALARIO)
+    receita_esperada = _receita_esperada_mes(lancamentos, mes)
     receita_esperada_outras = round(receita_esperada - receita_esperada_salario, 2)
     receita_esperada_centavos = para_centavos(receita_esperada)
     despesas_projetado = []
     total_projetado_centavos = 0
     for categoria in categorias_operacionais:
-        projecao = projecao_categoria(lancamentos, categoria, limite_por_categoria.get(categoria), inicio, fim)
+        projecao = projecao_categoria(lancamentos, categoria, limite_por_categoria.get(categoria), mes)
         if projecao["projecao"]:
             despesas_projetado.append({"categoria": categoria, "valor": projecao["projecao"]})
             total_projetado_centavos += para_centavos(projecao["projecao"])
@@ -582,9 +604,7 @@ def dre(
     }
 
     return {
-        "ciclo": rotulo_ciclo(fim),
-        "inicio": inicio,
-        "fim": fim,
+        "mes": mes,
         "realizado": realizado,
         "projetado": projetado,
         "capex": para_reais(capex_centavos),
@@ -593,41 +613,37 @@ def dre(
 
 def projecao_compromissos_futuros(
     lancamentos: Sequence[Dict[str, Any]],
-    rotulo_referencia: Optional[str] = None,
+    mes_referencia_base: Optional[str] = None,
     meses: int = 6,
 ) -> List[Dict[str, Any]]:
-    """Quanto deve sobrar em cada um dos próximos ciclos: receita esperada menos
+    """Quanto deve sobrar em cada um dos próximos meses: receita esperada menos
     o que já é CERTO (parcelas cadastradas + "Dívidas", que na prática é
     financiamento com cronograma já conhecido) menos o gasto recorrente típico
     (média histórica do que não é compromisso certo — mercado, transporte,
     etc.) — não é nem só os compromissos certos (ignora o resto do gasto
     normal) nem o orçamento cheio (assume disciplina perfeita), é o que você
     realmente costuma gastar. `acumulado` é a reserva esperada somando os
-    ciclos um a um."""
-    _, fim = ciclo_por_rotulo(rotulo_referencia) if rotulo_referencia else ciclo_atual()
+    meses um a um."""
+    mes = mes_referencia_base or mes_atual()
     saida = []
     acumulado = 0.0
     for _ in range(meses):
-        inicio_alvo, fim = ciclo_seguinte(fim)
+        mes = mes_seguinte(mes)
         compromissos_certos_centavos = sum(
             para_centavos(e.get("valor") or 0)
-            for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim
-            and e.get("tipo") == config.TIPO_DESPESA
-            and _eh_compromisso_certo(e)
+            for e in _do_mes(lancamentos, mes)
+            if e.get("tipo") == config.TIPO_DESPESA and _eh_compromisso_certo(e)
         )
         compromissos_certos = para_reais(compromissos_certos_centavos)
         gasto_recorrente_centavos = _media_historica_despesa_centavos(
-            lancamentos, inicio_alvo, excluir_compromissos_certos=True
+            lancamentos, mes, excluir_compromissos_certos=True
         ) or 0
         gasto_recorrente = para_reais(gasto_recorrente_centavos)
-        receita_esperada = _receita_esperada_ciclo(lancamentos, inicio_alvo)
+        receita_esperada = _receita_esperada_mes(lancamentos, mes)
         saldo_esperado = round(receita_esperada - compromissos_certos - gasto_recorrente, 2)
         acumulado = round(acumulado + saldo_esperado, 2)
         saida.append({
-            "ciclo": rotulo_ciclo(fim),
-            "inicio": inicio_alvo,
-            "fim": fim,
+            "mes": mes,
             "receitaEsperada": receita_esperada,
             "gastoRecorrenteEsperado": gasto_recorrente,
             "compromissosCertos": compromissos_certos,
@@ -641,21 +657,18 @@ def _sinais_comportamentais(
     lancamentos: Sequence[Dict[str, Any]],
     orcamentos: Sequence[Dict[str, Any]],
     dia_iso: str,
-    inicio_ciclo: str,
-    fim_ciclo: str,
+    mes: str,
 ) -> Dict[str, Any]:
     """Os 4 sinais que definimos: transação grande, gatilho de impulso conhecido,
     mudança de padrão numa categoria historicamente baixa, e frequência alta no
     mesmo dia. Cada desconto vem com o alerta que explica de onde saiu."""
-    mes = dia_iso[:7]
     limite_por_categoria = {o["categoria"]: para_centavos(o["limite"]) for o in orcamentos}
 
-    gasto_ciclo_por_categoria: Dict[str, int] = {}
-    for e in lancamentos:
-        data = e.get("data") or ""
-        if e.get("tipo") != config.TIPO_DESPESA or not (inicio_ciclo <= data <= fim_ciclo):
+    gasto_mes_por_categoria: Dict[str, int] = {}
+    for e in _do_mes(lancamentos, mes):
+        if e.get("tipo") != config.TIPO_DESPESA:
             continue
-        gasto_ciclo_por_categoria[e["categoria"]] = gasto_ciclo_por_categoria.get(
+        gasto_mes_por_categoria[e["categoria"]] = gasto_mes_por_categoria.get(
             e["categoria"], 0
         ) + para_centavos(e.get("valor") or 0)
 
@@ -675,7 +688,7 @@ def _sinais_comportamentais(
         limite_centavos = limite_por_categoria.get(categoria)
         if not limite_centavos:
             continue
-        restante = max(0, limite_centavos - gasto_ciclo_por_categoria.get(categoria, 0))
+        restante = max(0, limite_centavos - gasto_mes_por_categoria.get(categoria, 0))
         valor_centavos = para_centavos(e.get("valor") or 0)
         if restante > 0 and valor_centavos > 0.4 * restante:
             pontuacao -= 25
@@ -708,7 +721,7 @@ def _sinais_comportamentais(
     for e in lancamentos:
         if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO or _eh_ruido_de_margem(e):
             continue
-        m = (e.get("data") or "")[:7]
+        m = mes_referencia(e)
         if m >= mes:
             continue
         totais_por_mes.setdefault(m, {})
@@ -744,15 +757,15 @@ def score_dia(
     dia_iso: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score do dia (0-100): 60% comportamento (os 4 sinais), 40% aderência à
-    meta de poupança do ciclo de fatura — é o que conecta o alerta do dia a dia
-    com "quanto eu quero economizar", não só com limites de categoria isolados."""
+    meta de poupança do mês de referência — é o que conecta o alerta do dia a
+    dia com "quanto eu quero economizar", não só com limites de categoria
+    isolados."""
     dia_iso = dia_iso or hoje_iso()
-    inicio, fim = ciclo_de(dia_iso)
-    rotulo = rotulo_ciclo(fim)
+    mes = mes_de(dia_iso)
 
-    comportamento = _sinais_comportamentais(lancamentos, orcamentos, dia_iso, inicio, fim)
-    poupanca = projecao_poupanca(lancamentos, rotulo, meta_valor)
-    categorias_em_risco = [c for c in projecao_orcamentos(lancamentos, orcamentos, rotulo) if c["vaiEstourar"]]
+    comportamento = _sinais_comportamentais(lancamentos, orcamentos, dia_iso, mes)
+    poupanca = projecao_poupanca(lancamentos, mes, meta_valor)
+    categorias_em_risco = [c for c in projecao_orcamentos(lancamentos, orcamentos, mes) if c["vaiEstourar"]]
 
     pontuacao_comportamento = comportamento["pontuacaoComportamento"]
     aderencia = poupanca.get("aderenciaPercentual")

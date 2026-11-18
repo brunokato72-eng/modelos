@@ -139,7 +139,7 @@ class TestEstatisticas(unittest.TestCase):
             lancamento(data="2026-08-01", valor=200.0),
             lancamento(data="2026-08-02", valor=100.0, categoria="Lazer", formaPagamento="VR",
                        conta="Ifood"),
-            lancamento(data="2026-08-03", valor=3000.0, tipo="Receita", categoria="Salário"),
+            lancamento(data="2026-08-03", valor=3000.0, tipo="Receita", categoria="Reembolso"),
             lancamento(data="2026-07-15", valor=150.0),
         ]
         resumo = resumo_mensal(lancamentos, "2026-08")

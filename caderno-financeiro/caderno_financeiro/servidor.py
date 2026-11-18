@@ -18,7 +18,7 @@ from flask import Flask, Response, g, jsonify, request, send_from_directory
 
 from . import auth, config, consulta, db, estatisticas, exportador, ia, registro
 from .calculadora import executar_calculo
-from .datas import ciclo_por_rotulo, rotulo_ciclo_atual, validar_mes
+from .datas import mes_atual, validar_mes
 
 DIRETORIO_PWA = Path(__file__).resolve().parent.parent / "web"
 
@@ -101,7 +101,7 @@ def criar_app() -> Flask:
     @app.get("/api/resumo")
     def _resumo():
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
+        mes = validar_mes(mes) if mes else mes_atual()
         lancamentos = db.listar(_conexao())
         return jsonify(estatisticas.resumo_mensal(lancamentos, mes))
 
@@ -109,17 +109,18 @@ def criar_app() -> Flask:
     def _listar():
         conexao = _conexao()
         mes = request.args.get("mes")
-        inicio, fim = ciclo_por_rotulo(validar_mes(mes)) if mes else (None, None)
+        mes = validar_mes(mes) if mes else None
+        limite = int(request.args.get("limite", 100))
         lancamentos = db.listar(
             conexao,
-            data_inicio=inicio,
-            data_fim=fim,
             tipo=request.args.get("tipo") or None,
             categoria=request.args.get("categoria") or None,
             forma_pagamento=request.args.get("forma") or None,
             conta=request.args.get("conta") or None,
-            limite=int(request.args.get("limite", 100)),
+            limite=None if mes else limite,
         )
+        if mes:
+            lancamentos = [e for e in lancamentos if estatisticas.mes_referencia(e) == mes][:limite]
         return jsonify(lancamentos)
 
     @app.get("/api/calcular")
@@ -155,14 +156,14 @@ def criar_app() -> Flask:
     @app.get("/api/saude")
     def _saude():
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
+        mes = validar_mes(mes) if mes else mes_atual()
         return jsonify(estatisticas.saude_financeira(db.listar(_conexao()), mes))
 
     @app.get("/api/orcamentos")
     def _listar_orcamentos():
         conexao = _conexao()
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
+        mes = validar_mes(mes) if mes else mes_atual()
         progresso = estatisticas.progresso_orcamentos(db.listar(conexao), db.listar_orcamentos(conexao), mes)
         return jsonify(progresso)
 
@@ -190,7 +191,7 @@ def criar_app() -> Flask:
     def _dre():
         conexao = _conexao()
         mes = request.args.get("mes")
-        mes = validar_mes(mes) if mes else rotulo_ciclo_atual()
+        mes = validar_mes(mes) if mes else mes_atual()
         resultado = estatisticas.dre(db.listar(conexao), db.listar_orcamentos(conexao), mes)
         return jsonify(resultado)
 

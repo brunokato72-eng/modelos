@@ -318,8 +318,7 @@ async function carregarPainel() {
       api("/api/orcamentos"),
       api("/api/investimentos"),
     ]);
-    document.getElementById("painel-ciclo-rotulo").textContent =
-      `ciclo de ${rotuloMes(dre.ciclo)} · fecha ${formatarDataCurta(dre.fim)}`;
+    document.getElementById("painel-ciclo-rotulo").textContent = rotuloMes(dre.mes);
     renderizarScore(scoreContainer, score);
     renderizarDre(dreRealizadoContainer, dre.realizado);
     renderizarDre(dreProjetadoContainer, dre.projetado, meta, dre.capex);
@@ -411,7 +410,7 @@ async function carregarDreFuturo() {
 
     const meses = Math.max(1, diferencaMeses(mesAtual(), estado.mesDreFuturo) + 1);
     const compromissos = await api(`/api/compromissos-futuros?meses=${meses}`);
-    const item = compromissos.find((c) => c.ciclo === estado.mesDreFuturo);
+    const item = compromissos.find((c) => c.mes === estado.mesDreFuturo);
     acumuladoContainer.innerHTML = "";
     if (item) {
       acumuladoContainer.appendChild(el("span", { class: "meta-rotulo", texto: "Reserva acumulada esperada até esse ciclo" }));

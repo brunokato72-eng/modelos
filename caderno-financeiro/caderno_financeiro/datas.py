@@ -48,6 +48,11 @@ def mes_anterior(mes: str) -> str:
     return f"{ano - 1}-12" if m == 1 else f"{ano}-{m - 1:02d}"
 
 
+def mes_seguinte(mes: str) -> str:
+    ano, m = (int(p) for p in mes.split("-"))
+    return f"{ano + 1}-01" if m == 12 else f"{ano}-{m + 1:02d}"
+
+
 def validar_iso(data_iso: str) -> str:
     if not RE_ISO.match(str(data_iso or "")):
         raise ValueError(f"data inválida (esperado AAAA-MM-DD): {data_iso!r}")

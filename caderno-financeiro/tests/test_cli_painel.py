@@ -72,10 +72,10 @@ class TestCmdSaude(unittest.TestCase):
     def test_json_reporta_pontuacao(self):
         with db.banco(self.banco) as conexao:
             db.inserir(conexao, [{
-                "id": "a", "data": "2026-08-01", "tipo": "Receita", "categoria": "Salário",
+                "id": "a", "data": "2026-07-15", "tipo": "Receita", "categoria": "Salário",
                 "valor": 5000.0, "valorTotal": 5000.0, "parcelaAtual": 1, "totalParcelas": 1,
                 "formaPagamento": "Pix", "conta": "Nubank", "descricao": "salário",
-                "criadoEm": "2026-08-01T09:00:00", "grupoParcelamento": None,
+                "criadoEm": "2026-07-15T09:00:00", "grupoParcelamento": None,
             }])
         args = argparse.Namespace(banco=self.banco, mes="2026-08", json=True)
         saida = _capturar(cli.cmd_saude, args)

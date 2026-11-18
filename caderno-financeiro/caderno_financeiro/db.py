@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS lancamentos (
     grupo_parcelamento TEXT,
     origem             TEXT NOT NULL DEFAULT 'manual',
     origem_id          TEXT,
-    revisao_pendente   INTEGER NOT NULL DEFAULT 0
+    revisao_pendente   INTEGER NOT NULL DEFAULT 0,
+    mes_referencia_manual TEXT
 );
 
 CREATE TABLE IF NOT EXISTS configuracao (
@@ -126,6 +127,7 @@ _MIGRACOES_LANCAMENTOS = (
     ("origem", "TEXT NOT NULL DEFAULT 'manual'"),
     ("origem_id", "TEXT"),
     ("revisao_pendente", "INTEGER NOT NULL DEFAULT 0"),
+    ("mes_referencia_manual", "TEXT"),
 )
 
 
@@ -153,6 +155,7 @@ COLUNAS = (
     "origem",
     "origem_id",
     "revisao_pendente",
+    "mes_referencia_manual",
 )
 
 # ligação entre o dicionário em camelCase (usado no código/IA) e as colunas
@@ -173,6 +176,7 @@ _DE_DICT = {
     "origem": "origem",
     "origemId": "origem_id",
     "revisaoPendente": "revisao_pendente",
+    "mesReferenciaManual": "mes_referencia_manual",
 }
 _PARA_DICT = {v: k for k, v in _DE_DICT.items()}
 
@@ -399,6 +403,19 @@ def resolver_revisao(conexao: sqlite3.Connection, id_lancamento: str, categoria:
     cursor = conexao.execute(
         "UPDATE lancamentos SET categoria = ?, revisao_pendente = 0 WHERE id = ?",
         (categoria, id_lancamento),
+    )
+    return cursor.rowcount > 0
+
+
+def definir_mes_referencia_manual(conexao: sqlite3.Connection, id_lancamento: str, mes: Optional[str]) -> bool:
+    """Força o mês de referência de um lançamento específico (AAAA-MM),
+    por cima da regra automática — usado pra 13º/férias, que não seguem a
+    regra padrão de deslocar o salário pro mês seguinte (ficam no mês em que
+    foram pagos de verdade). `mes=None` remove a exceção, volta pra regra
+    automática."""
+    cursor = conexao.execute(
+        "UPDATE lancamentos SET mes_referencia_manual = ? WHERE id = ?",
+        (mes, id_lancamento),
     )
     return cursor.rowcount > 0
 
