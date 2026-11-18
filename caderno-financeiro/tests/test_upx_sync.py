@@ -480,6 +480,55 @@ class TestSincronizar(unittest.TestCase):
         ia_mock.assert_not_called()
         self.assertEqual({l["categoria"] for l in lancamentos}, {"Reembolso"})
 
+    def test_transferencia_generica_na_conta_de_portabilidade_e_salario(self):
+        """Achado real: o empregador redireciona o salário por portabilidade
+        pra essa conta, sempre como 'Transferência Recebida' genérica (sem
+        contraparte nomeada) — a IA classificava isso ora como Salário, ora
+        como 'Outras entradas', mês a mês. Precisa ser determinístico."""
+        conta_nu_pagamentos = {
+            "account_id": "acc-nupag",
+            "category": "checking",
+            "display_label": "Nu Pagamentos S.A. - Instituição de Pagamento (Conta Pré-paga) •••• 3820",
+            "institution_name": "Nu Pagamentos",
+        }
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-salario-portabilidade", account_id="acc-nupag",
+            valor=3636.0, direction="inflow", descricao="Transferência Recebida",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(
+                 contas=[conta_nu_pagamentos], paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_not_called()
+        self.assertEqual(lancamentos[0]["categoria"], "Salário")
+
+    def test_transferencia_nomeada_na_conta_de_portabilidade_nao_e_forcada_pra_salario(self):
+        """A mesma conta recebe Pix de terceiros (esposa, familiares) também
+        — só a transferência SEM contraparte nomeada é o padrão de salário."""
+        conta_nu_pagamentos = {
+            "account_id": "acc-nupag",
+            "category": "checking",
+            "display_label": "Nu Pagamentos S.A. - Instituição de Pagamento (Conta Pré-paga) •••• 3820",
+            "institution_name": "Nu Pagamentos",
+        }
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-pix-esposa", account_id="acc-nupag",
+            valor=1000.0, direction="inflow",
+            descricao="Transferência Recebida|LETYCIA PEREIRA SOARES KATO",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(
+                 contas=[conta_nu_pagamentos], paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Outras entradas", "confianca": 0.7}]) as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_called_once()
+        self.assertEqual(lancamentos[0]["categoria"], "Outras entradas")
+
     def test_mesma_transacao_repetida_na_leva_nao_quebra_insercao(self):
         """Se a paginação trouxer o mesmo transaction_id duas vezes numa
         mesma chamada (cursor com overlap), a segunda cópia não pode virar

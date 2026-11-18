@@ -284,11 +284,21 @@ JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pende
 _REMETENTES_REEMBOLSO_SAUDE = ("bradesco saude", "bradesco saúde", "amil")
 
 
-def _categoria_conhecida(descricao: str, tipo: str, valor: float) -> Optional[str]:
+def _categoria_conhecida(descricao: str, tipo: str, valor: float, conta: str = "") -> Optional[str]:
     d = descricao.lower()
     if tipo == config.TIPO_RECEITA:
         if any(remetente in d for remetente in _REMETENTES_REEMBOLSO_SAUDE):
             return "Reembolso"
+        # Portabilidade salarial: o empregador redireciona o salário pra essa
+        # conta automaticamente, e isso sempre chega como "Transferência
+        # Recebida" genérica (sem "|nome" de contraparte) — achado real,
+        # confirmado pelo titular (padrão bimensal ~R$2.000-4.700). Sem essa
+        # regra, a IA classificava isso ora como Salário ora como "Outras
+        # entradas" de mês pra mês, inconsistente mesmo sendo sempre a
+        # mesma coisa — exatamente o tipo de erro que o titular pediu pra
+        # eliminar deixando determinístico em vez de depender da IA.
+        if descricao.strip() == "Transferência Recebida" and "nu pagamentos" in conta.lower():
+            return "Salário"
         return None
     if tipo != config.TIPO_DESPESA:
         return None
@@ -369,7 +379,7 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
         indices_para_ia: List[int] = []
         para_ia = []
         for i, t in enumerate(pendentes):
-            conhecida = _categoria_conhecida(t["descricao"], t["tipo"], t["valor"])
+            conhecida = _categoria_conhecida(t["descricao"], t["tipo"], t["valor"], t["conta"])
             if conhecida:
                 categorias_conhecidas[i] = conhecida
             else:
