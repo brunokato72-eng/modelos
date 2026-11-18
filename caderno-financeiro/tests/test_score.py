@@ -204,6 +204,25 @@ class TestProjecaoPoupanca(unittest.TestCase):
         self.assertEqual(resultado_com_ruido["despesaProjetada"], resultado_sem_ruido["despesaProjetada"])
 
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_produto_de_venda_de_ativo_nao_conta_como_receita_mesmo_sem_palavra_de_margem(self, _hoje):
+        # achado real: TED de R$8.571,37 era produto de venda de ações usado
+        # pra pagar uma despesa — dinheiro que ele já tinha mudando de forma,
+        # não renda nova. Diferente do lado Despesa, aqui a categoria inteira
+        # "Investimento" é ignorada, mesmo sem nenhuma palavra de margem.
+        com_venda = [
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-01", 1000, "Mercado"),
+            _lanc("2026-09-02", 8571.37, "Investimento", tipo="Receita", descricao="TED recebida de BRUNO NONATO KATO"),
+        ]
+        sem_venda = [
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-01", 1000, "Mercado"),
+        ]
+        resultado_com_venda = estatisticas.projecao_poupanca(com_venda, "2026-09")
+        resultado_sem_venda = estatisticas.projecao_poupanca(sem_venda, "2026-09")
+        self.assertEqual(resultado_com_venda["receitaEsperada"], resultado_sem_venda["receitaEsperada"])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
     def test_recompra_de_acao_vendida_a_descoberto_conta_como_gasto_de_verdade(self, _hoje):
         # achado real: o usuário vendeu mais ações do que tinha e precisou
         # recomprar — isso é dinheiro saindo de verdade (~R$1.600), diferente

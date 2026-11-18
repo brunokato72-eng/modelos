@@ -279,11 +279,16 @@ CATEGORIA_NEGOCIO = "Negócio"
 # (devolução de cobertura) na mesma categoria. Sem isso, o score e a poupança
 # projetada ficavam reagindo a dinheiro que nem saiu nem entrou de verdade.
 #
-# Importante: só o RUÍDO de margem é ignorado, não a categoria inteira — se o
-# usuário realmente precisa recomprar ações vendidas a descoberto, esse Pix é
-# gasto de verdade (achado real: ele vendeu mais ações do que tinha e precisou
-# recomprar por ~R$1.600) e tem que continuar contando. A distinção é pela
-# descrição: só os eventos de cobertura/chamada/empréstimo de margem são ruído.
+# A regra é assimétrica entre Despesa e Receita, por pedido explícito do
+# usuário com dois casos reais:
+#   - Despesa: só o RUÍDO de margem é ignorado, não a categoria inteira — se
+#     o usuário precisa recomprar ações vendidas a descoberto, esse Pix é
+#     gasto de verdade (achado real: ~R$1.600) e tem que continuar contando.
+#   - Receita: a categoria inteira é ignorada, sempre — seja devolução de
+#     margem (ruído) ou produto de venda de ativo que ele já possuía (achado
+#     real: TED de R$8.571,37 veio de uma venda de ações, não é renda nova,
+#     é dinheiro que ele já tinha mudando de forma). Nenhuma entrada em
+#     "Investimento" é receita de verdade, só a Despesa tem o filtro fino.
 CATEGORIA_INVESTIMENTO = "Investimento"
 _PALAVRAS_RUIDO_MARGEM = ("margem", "empréstimo", "emprestimo", "btc", "emolumentos")
 
@@ -350,7 +355,7 @@ def _receita_esperada_ciclo(
             for e in lancamentos
             if inicio_alvo <= (e.get("data") or "") <= fim_alvo
             and e.get("tipo") == config.TIPO_RECEITA
-            and not _eh_ruido_de_margem(e)
+            and e.get("categoria") != CATEGORIA_INVESTIMENTO
             and (categoria is None or e.get("categoria") == categoria)
         )
         if total:
@@ -495,7 +500,7 @@ def dre(
         e for e in lancamentos
         if e.get("tipo") == config.TIPO_RECEITA
         and inicio <= (e.get("data") or "") <= fim
-        and not _eh_ruido_de_margem(e)
+        and e.get("categoria") != CATEGORIA_INVESTIMENTO
     ]
     capex_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
