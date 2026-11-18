@@ -297,7 +297,17 @@ def _categoria_conhecida(descricao: str, tipo: str, valor: float, conta: str = "
         # entradas" de mês pra mês, inconsistente mesmo sendo sempre a
         # mesma coisa — exatamente o tipo de erro que o titular pediu pra
         # eliminar deixando determinístico em vez de depender da IA.
-        if descricao.strip() == "Transferência Recebida" and "nu pagamentos" in conta.lower():
+        #
+        # O piso de R$1.000 importa: a mesma conta também recebe Pix pequenos
+        # (reembolso, estorno) igualmente genéricos "Transferência Recebida"
+        # sem contraparte — achado real: um reembolso de terapia de R$182,44
+        # foi classificado como Salário por engano antes desse piso existir.
+        # Nenhum pagamento de salário real já visto veio abaixo disso.
+        if (
+            descricao.strip() == "Transferência Recebida"
+            and "nu pagamentos" in conta.lower()
+            and valor >= 1000
+        ):
             return "Salário"
         return None
     if tipo != config.TIPO_DESPESA:

@@ -505,6 +505,31 @@ class TestSincronizar(unittest.TestCase):
         ia_mock.assert_not_called()
         self.assertEqual(lancamentos[0]["categoria"], "Salário")
 
+    def test_transferencia_generica_pequena_na_conta_de_portabilidade_vai_pra_ia(self):
+        """Achado real: um reembolso de terapia de R$182,44 chegou como
+        'Transferência Recebida' genérica na mesma conta e foi classificado
+        como Salário por engano — nenhum pagamento de salário real visto até
+        hoje vem abaixo de R$1.000, então valores pequenos não são forçados."""
+        conta_nu_pagamentos = {
+            "account_id": "acc-nupag",
+            "category": "checking",
+            "display_label": "Nu Pagamentos S.A. - Instituição de Pagamento (Conta Pré-paga) •••• 3820",
+            "institution_name": "Nu Pagamentos",
+        }
+        transacoes = [pagina([transacao_bruta(
+            transaction_id="tx-reembolso-generico", account_id="acc-nupag",
+            valor=182.44, direction="inflow", descricao="Transferência Recebida",
+        )])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(
+                 contas=[conta_nu_pagamentos], paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes", return_value=[{"categoria": "Reembolso", "confianca": 0.7}]) as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_called_once()
+        self.assertEqual(lancamentos[0]["categoria"], "Reembolso")
+
     def test_transferencia_nomeada_na_conta_de_portabilidade_nao_e_forcada_pra_salario(self):
         """A mesma conta recebe Pix de terceiros (esposa, familiares) também
         — só a transferência SEM contraparte nomeada é o padrão de salário."""
