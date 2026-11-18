@@ -240,7 +240,7 @@ def _media_historica_despesa_centavos(
             for e in lancamentos
             if inicio_alvo <= (e.get("data") or "") <= fim_alvo
             and e.get("tipo") == config.TIPO_DESPESA
-            and e.get("categoria") != CATEGORIA_NEGOCIO
+            and e.get("categoria") not in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO)
             and (categoria is None or e.get("categoria") == categoria)
             and not (excluir_compromissos_certos and _eh_compromisso_certo(e))
         )
@@ -271,6 +271,13 @@ def _projetar_com_shrinkage(
 # aporte pontual de milhares de reais faz o score ficar sempre crítico até o
 # capex terminar, o que não diz nada sobre o comportamento do usuário.
 CATEGORIA_NEGOCIO = "Negócio"
+
+# Lançamentos técnicos de corretora (cobertura de margem, aluguel de ações/BTC)
+# não são gasto nem renda de verdade — são ruído de liquidação que aparece tanto
+# como "Despesa" (tarifa, retirada de cobertura) quanto como "Receita"
+# (devolução de cobertura) na mesma categoria. Sem isso, o score e a poupança
+# projetada ficavam reagindo a dinheiro que nem saiu nem entrou de verdade.
+CATEGORIA_INVESTIMENTO = "Investimento"
 
 # "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
 # (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
@@ -318,7 +325,9 @@ def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) 
         total = sum(
             para_centavos(e.get("valor") or 0)
             for e in lancamentos
-            if inicio_alvo <= (e.get("data") or "") <= fim_alvo and e.get("tipo") == config.TIPO_RECEITA
+            if inicio_alvo <= (e.get("data") or "") <= fim_alvo
+            and e.get("tipo") == config.TIPO_RECEITA
+            and e.get("categoria") != CATEGORIA_INVESTIMENTO
         )
         if total:
             totais.append(total)
@@ -407,7 +416,7 @@ def projecao_poupanca(
         e for e in lancamentos
         if e.get("tipo") == config.TIPO_DESPESA
         and inicio <= (e.get("data") or "") <= fim
-        and e.get("categoria") != CATEGORIA_NEGOCIO
+        and e.get("categoria") not in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO)
     ]
     despesas_ate_agora_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if (e.get("data") or "") <= data_referencia
@@ -459,7 +468,9 @@ def dre(
     ]
     receitas_ciclo = [
         e for e in lancamentos
-        if e.get("tipo") == config.TIPO_RECEITA and inicio <= (e.get("data") or "") <= fim
+        if e.get("tipo") == config.TIPO_RECEITA
+        and inicio <= (e.get("data") or "") <= fim
+        and e.get("categoria") != CATEGORIA_INVESTIMENTO
     ]
     capex_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
@@ -594,7 +605,10 @@ def _sinais_comportamentais(
         ) + para_centavos(e.get("valor") or 0)
 
     despesas_do_dia = [
-        e for e in lancamentos if e.get("tipo") == config.TIPO_DESPESA and e.get("data") == dia_iso
+        e for e in lancamentos
+        if e.get("tipo") == config.TIPO_DESPESA
+        and e.get("data") == dia_iso
+        and e.get("categoria") != CATEGORIA_INVESTIMENTO
     ]
 
     pontuacao = 100
@@ -630,14 +644,14 @@ def _sinais_comportamentais(
     janela_inicio = somar_dias(dia_iso, -6)
     contagem_recente: Dict[str, int] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO:
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO):
             continue
         data = e.get("data") or ""
         if janela_inicio <= data <= dia_iso:
             contagem_recente[e["categoria"]] = contagem_recente.get(e["categoria"], 0) + 1
     totais_por_mes: Dict[str, Dict[str, int]] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO:
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO):
             continue
         m = (e.get("data") or "")[:7]
         if m >= mes:

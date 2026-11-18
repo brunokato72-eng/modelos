@@ -183,6 +183,26 @@ class TestProjecaoPoupanca(unittest.TestCase):
         resultado_apertado = estatisticas.projecao_poupanca(lancamentos, "2026-09", meta_valor=4000.0)
         self.assertFalse(resultado_apertado["noCaminho"])
 
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_ruido_de_corretora_nao_entra_na_despesa_nem_na_receita(self, _hoje):
+        # "Investimento" aparece tanto como Despesa (tarifa/retirada de margem)
+        # quanto como Receita (devolução de margem) — nenhum dos dois é gasto
+        # ou renda de verdade, então nenhum pode mexer na poupança projetada.
+        com_ruido = [
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-01", 1000, "Mercado"),
+            _lanc("2026-09-02", 300, "Investimento", tipo="Despesa"),
+            _lanc("2026-09-02", 280, "Investimento", tipo="Receita"),
+        ]
+        sem_ruido = [
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-01", 1000, "Mercado"),
+        ]
+        resultado_com_ruido = estatisticas.projecao_poupanca(com_ruido, "2026-09")
+        resultado_sem_ruido = estatisticas.projecao_poupanca(sem_ruido, "2026-09")
+        self.assertEqual(resultado_com_ruido["receitaEsperada"], resultado_sem_ruido["receitaEsperada"])
+        self.assertEqual(resultado_com_ruido["despesaProjetada"], resultado_sem_ruido["despesaProjetada"])
+
 
 class TestDre(unittest.TestCase):
     @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
@@ -219,6 +239,17 @@ class TestDre(unittest.TestCase):
     def test_sem_receita_margem_fica_none(self, _hoje):
         resultado = estatisticas.dre([_lanc("2026-09-05", 100, "Mercado")], [], "2026-09")
         self.assertIsNone(resultado["realizado"]["margemPercentual"])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_devolucao_de_margem_nao_conta_como_receita_bruta(self, _hoje):
+        orcamentos = []
+        lancamentos = [
+            _lanc("2026-09-01", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-05", 1000, "Mercado"),
+            _lanc("2026-09-06", 280, "Investimento", tipo="Receita"),
+        ]
+        resultado = estatisticas.dre(lancamentos, orcamentos, "2026-09")
+        self.assertEqual(resultado["realizado"]["receitaBruta"], 5000.0)
 
 
 class TestProjecaoCompromissosFuturos(unittest.TestCase):
@@ -328,6 +359,18 @@ class TestScoreDia(unittest.TestCase):
         self.assertEqual(resultado["pontuacaoComportamento"], 100)
         self.assertLess(resultado["pontuacaoFinal"], 100)
         self.assertTrue(len(resultado["categoriasEmRiscoDeEstourar"]) == 0)  # sem orçamento definido
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_frequencia_alta_em_investimento_nao_gera_alerta(self, _hoje):
+        # achado real: cobertura de margem da corretora gera várias transações
+        # "Investimento" por dia — isso é ruído de liquidação, não comportamento
+        # do usuário, então não pode disparar o sinal de mudança de padrão nem
+        # o de frequência no dia.
+        orcamentos = []
+        lancamentos = [_lanc("2026-09-10", 10, "Investimento") for _ in range(4)]
+        resultado = estatisticas.score_dia(lancamentos, orcamentos, dia_iso="2026-09-10")
+        self.assertEqual(resultado["pontuacaoComportamento"], 100)
+        self.assertEqual(resultado["alertasComportamento"], [])
 
 
 if __name__ == "__main__":
