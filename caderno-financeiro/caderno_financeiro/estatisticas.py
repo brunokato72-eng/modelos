@@ -240,7 +240,8 @@ def _media_historica_despesa_centavos(
             for e in lancamentos
             if inicio_alvo <= (e.get("data") or "") <= fim_alvo
             and e.get("tipo") == config.TIPO_DESPESA
-            and e.get("categoria") not in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO)
+            and e.get("categoria") != CATEGORIA_NEGOCIO
+            and not _eh_ruido_de_margem(e)
             and (categoria is None or e.get("categoria") == categoria)
             and not (excluir_compromissos_certos and _eh_compromisso_certo(e))
         )
@@ -277,7 +278,21 @@ CATEGORIA_NEGOCIO = "Negócio"
 # como "Despesa" (tarifa, retirada de cobertura) quanto como "Receita"
 # (devolução de cobertura) na mesma categoria. Sem isso, o score e a poupança
 # projetada ficavam reagindo a dinheiro que nem saiu nem entrou de verdade.
+#
+# Importante: só o RUÍDO de margem é ignorado, não a categoria inteira — se o
+# usuário realmente precisa recomprar ações vendidas a descoberto, esse Pix é
+# gasto de verdade (achado real: ele vendeu mais ações do que tinha e precisou
+# recomprar por ~R$1.600) e tem que continuar contando. A distinção é pela
+# descrição: só os eventos de cobertura/chamada/empréstimo de margem são ruído.
 CATEGORIA_INVESTIMENTO = "Investimento"
+_PALAVRAS_RUIDO_MARGEM = ("margem", "empréstimo", "emprestimo", "btc", "emolumentos")
+
+
+def _eh_ruido_de_margem(lancamento: Dict[str, Any]) -> bool:
+    if lancamento.get("categoria") != CATEGORIA_INVESTIMENTO:
+        return False
+    descricao = (lancamento.get("descricao") or "").lower()
+    return any(palavra in descricao for palavra in _PALAVRAS_RUIDO_MARGEM)
 
 # "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
 # (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
@@ -327,7 +342,7 @@ def _receita_esperada_ciclo(lancamentos: Sequence[Dict[str, Any]], inicio: str) 
             for e in lancamentos
             if inicio_alvo <= (e.get("data") or "") <= fim_alvo
             and e.get("tipo") == config.TIPO_RECEITA
-            and e.get("categoria") != CATEGORIA_INVESTIMENTO
+            and not _eh_ruido_de_margem(e)
         )
         if total:
             totais.append(total)
@@ -416,7 +431,8 @@ def projecao_poupanca(
         e for e in lancamentos
         if e.get("tipo") == config.TIPO_DESPESA
         and inicio <= (e.get("data") or "") <= fim
-        and e.get("categoria") not in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO)
+        and e.get("categoria") != CATEGORIA_NEGOCIO
+        and not _eh_ruido_de_margem(e)
     ]
     despesas_ate_agora_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if (e.get("data") or "") <= data_referencia
@@ -470,7 +486,7 @@ def dre(
         e for e in lancamentos
         if e.get("tipo") == config.TIPO_RECEITA
         and inicio <= (e.get("data") or "") <= fim
-        and e.get("categoria") != CATEGORIA_INVESTIMENTO
+        and not _eh_ruido_de_margem(e)
     ]
     capex_centavos = sum(
         para_centavos(e.get("valor") or 0) for e in despesas_ciclo if e.get("categoria") == CATEGORIA_NEGOCIO
@@ -608,7 +624,7 @@ def _sinais_comportamentais(
         e for e in lancamentos
         if e.get("tipo") == config.TIPO_DESPESA
         and e.get("data") == dia_iso
-        and e.get("categoria") != CATEGORIA_INVESTIMENTO
+        and not _eh_ruido_de_margem(e)
     ]
 
     pontuacao = 100
@@ -644,14 +660,14 @@ def _sinais_comportamentais(
     janela_inicio = somar_dias(dia_iso, -6)
     contagem_recente: Dict[str, int] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO):
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO or _eh_ruido_de_margem(e):
             continue
         data = e.get("data") or ""
         if janela_inicio <= data <= dia_iso:
             contagem_recente[e["categoria"]] = contagem_recente.get(e["categoria"], 0) + 1
     totais_por_mes: Dict[str, Dict[str, int]] = {}
     for e in lancamentos:
-        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") in (CATEGORIA_NEGOCIO, CATEGORIA_INVESTIMENTO):
+        if e.get("tipo") != config.TIPO_DESPESA or e.get("categoria") == CATEGORIA_NEGOCIO or _eh_ruido_de_margem(e):
             continue
         m = (e.get("data") or "")[:7]
         if m >= mes:

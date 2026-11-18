@@ -191,8 +191,8 @@ class TestProjecaoPoupanca(unittest.TestCase):
         com_ruido = [
             _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
             _lanc("2026-09-01", 1000, "Mercado"),
-            _lanc("2026-09-02", 300, "Investimento", tipo="Despesa"),
-            _lanc("2026-09-02", 280, "Investimento", tipo="Receita"),
+            _lanc("2026-09-02", 300, "Investimento", tipo="Despesa", descricao="TARIFA POR COBERTURA DE MARGEM"),
+            _lanc("2026-09-02", 280, "Investimento", tipo="Receita", descricao="DEVOLUÇÃO DE COBERTURA DE MARGEM"),
         ]
         sem_ruido = [
             _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
@@ -202,6 +202,23 @@ class TestProjecaoPoupanca(unittest.TestCase):
         resultado_sem_ruido = estatisticas.projecao_poupanca(sem_ruido, "2026-09")
         self.assertEqual(resultado_com_ruido["receitaEsperada"], resultado_sem_ruido["receitaEsperada"])
         self.assertEqual(resultado_com_ruido["despesaProjetada"], resultado_sem_ruido["despesaProjetada"])
+
+    @mock.patch.object(estatisticas, "hoje_iso", return_value="2026-09-10")
+    def test_recompra_de_acao_vendida_a_descoberto_conta_como_gasto_de_verdade(self, _hoje):
+        # achado real: o usuário vendeu mais ações do que tinha e precisou
+        # recomprar — isso é dinheiro saindo de verdade (~R$1.600), diferente
+        # da tarifa/cobertura de margem que se autocancela todo dia. Só o
+        # ruído de margem é ignorado; uma compra de ação de verdade continua
+        # contando, mesmo vindo da mesma categoria "Investimento".
+        lancamentos = [
+            _lanc("2026-08-05", 5000, "Salário", tipo="Receita"),
+            _lanc("2026-09-01", 1000, "Mercado"),
+            _lanc("2026-09-02", 1600, "Investimento", tipo="Despesa", descricao="COMPRA DE AÇÕES VISC11"),
+        ]
+        resultado = estatisticas.projecao_poupanca(lancamentos, "2026-09")
+        # piso é sempre o total já conhecido no ciclo (sem histórico, a
+        # projeção pelo ritmo pode ficar até mais alta que isso)
+        self.assertGreaterEqual(resultado["despesaProjetada"], 2600.0)
 
 
 class TestDre(unittest.TestCase):
@@ -246,7 +263,7 @@ class TestDre(unittest.TestCase):
         lancamentos = [
             _lanc("2026-09-01", 5000, "Salário", tipo="Receita"),
             _lanc("2026-09-05", 1000, "Mercado"),
-            _lanc("2026-09-06", 280, "Investimento", tipo="Receita"),
+            _lanc("2026-09-06", 280, "Investimento", tipo="Receita", descricao="DEVOLUÇÃO DE COBERTURA DE MARGEM"),
         ]
         resultado = estatisticas.dre(lancamentos, orcamentos, "2026-09")
         self.assertEqual(resultado["realizado"]["receitaBruta"], 5000.0)
@@ -367,7 +384,10 @@ class TestScoreDia(unittest.TestCase):
         # do usuário, então não pode disparar o sinal de mudança de padrão nem
         # o de frequência no dia.
         orcamentos = []
-        lancamentos = [_lanc("2026-09-10", 10, "Investimento") for _ in range(4)]
+        lancamentos = [
+            _lanc("2026-09-10", 10, "Investimento", descricao="RETIRADA DE COBERTURA DE MARGEM")
+            for _ in range(4)
+        ]
         resultado = estatisticas.score_dia(lancamentos, orcamentos, dia_iso="2026-09-10")
         self.assertEqual(resultado["pontuacaoComportamento"], 100)
         self.assertEqual(resultado["alertasComportamento"], [])

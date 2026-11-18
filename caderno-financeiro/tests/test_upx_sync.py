@@ -457,6 +457,29 @@ class TestSincronizar(unittest.TestCase):
         ia_mock.assert_called_once()
         self.assertEqual(lancamentos[0]["categoria"], "Reembolso")
 
+    def test_pix_de_convenio_de_saude_e_sempre_reembolso(self):
+        """Bradesco Saúde/Amil nunca mandam Pix por outro motivo que não seja
+        devolver uma consulta/terapia já paga — pedido explícito do usuário
+        pra parar de contar isso como receita nova."""
+        transacoes = [pagina([
+            transacao_bruta(
+                transaction_id="tx-bradesco-saude", valor=180.0, direction="inflow",
+                descricao="Pix recebido|BRADESCO SAUDE S/A",
+            ),
+            transacao_bruta(
+                transaction_id="tx-amil", valor=95.0, direction="inflow",
+                descricao="Pix recebido|AMIL ASSISTENCIA MEDICA",
+            ),
+        ])]
+        with db.banco(self.banco) as conexao, \
+             mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+             mock.patch.object(ia, "categorizar_transacoes") as ia_mock:
+            resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        ia_mock.assert_not_called()
+        self.assertEqual({l["categoria"] for l in lancamentos}, {"Reembolso"})
+
     def test_mesma_transacao_repetida_na_leva_nao_quebra_insercao(self):
         """Se a paginação trouxer o mesmo transaction_id duas vezes numa
         mesma chamada (cursor com overlap), a segunda cópia não pode virar

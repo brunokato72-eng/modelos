@@ -273,12 +273,25 @@ JANELA_MESES = 3  # ~90 dias — suficiente pra pegar qualquer transação pende
 # Comerciantes/pessoas recorrentes que o usuário sempre associa à mesma
 # categoria (confirmado por ele) — decidir isso com uma chamada de IA seria
 # mais lento, mais caro e arriscaria errar onde já se sabe a resposta certa.
-# Só vale pra Despesa: a mesma contraparte numa Receita (ex.: um reembolso
-# dela) é outra coisa, não a mensalidade em si.
+# As regras de Despesa abaixo são por contraparte (a mesma pessoa numa Receita
+# seria outra coisa, ex. reembolso dela — por isso o ramo Receita é separado).
+#
+# Convênios/seguradoras de saúde: um Pix recebido deles é sempre reembolso de
+# consulta/terapia paga antes, nunca "ganho" — pedido explícito do usuário
+# depois de notar que esses valores inflavam a receita do ciclo junto com o
+# gasto original (a mesma terapia contava dobrado: como despesa em Saúde E
+# como receita nova em "Outras entradas"/"Reembolso" mal classificado).
+_REMETENTES_REEMBOLSO_SAUDE = ("bradesco saude", "bradesco saúde", "amil")
+
+
 def _categoria_conhecida(descricao: str, tipo: str, valor: float) -> Optional[str]:
+    d = descricao.lower()
+    if tipo == config.TIPO_RECEITA:
+        if any(remetente in d for remetente in _REMETENTES_REEMBOLSO_SAUDE):
+            return "Reembolso"
+        return None
     if tipo != config.TIPO_DESPESA:
         return None
-    d = descricao.lower()
     if "daniela biz" in d:
         return "Educação"  # aulas de inglês, mensal
     if "ana paula de castro freitas" in d or "ana paula de c freitas" in d:
