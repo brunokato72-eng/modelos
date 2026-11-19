@@ -28,6 +28,7 @@ CATEGORIAS_DESPESA = (
     "Pessoal",
     "Assinaturas",
     "Negócio",
+    "Viagens",
     "Outros",
 )
 
