@@ -642,7 +642,7 @@ def cmd_dre(args) -> int:
         if dados["margemPercentual"] is not None:
             print(f"    margem:            {dados['margemPercentual']}%")
 
-    print(pintar(f"\nDRE — ciclo de {resultado['ciclo']} ({resultado['inicio']} a {resultado['fim']})", NEGRITO))
+    print(pintar(f"\nDRE — {resultado['mes']}", NEGRITO))
     _bloco("Realizado", resultado["realizado"])
     _bloco("Projetado até o fechamento", resultado["projetado"])
     if resultado["capex"]:
@@ -662,7 +662,7 @@ def cmd_futuro(args) -> int:
     print(pintar("\nCompromissos futuros (receita esperada − gasto recorrente típico − parcelas já certas)", NEGRITO))
     for item in resultado:
         cor = VERDE if item["saldoEsperado"] >= 0 else VERMELHO
-        print(f"  {item['ciclo']}  receita {formatar(item['receitaEsperada']):>12}   "
+        print(f"  {item['mes']}  receita {formatar(item['receitaEsperada']):>12}   "
               f"recorrente {formatar(item['gastoRecorrenteEsperado']):>10}   "
               f"parcelas {formatar(item['compromissosCertos']):>10}   "
               f"saldo {pintar(formatar(item['saldoEsperado']), cor):>12}   "
@@ -694,9 +694,9 @@ def cmd_meta(args) -> int:
 
     if meta_valor is None:
         print(pintar("nenhuma meta definida ainda — `caderno meta --definir <valor>`", AMARELO))
-    print(pintar(f"\nMeta de poupança — ciclo de {resultado['ciclo']} ({resultado['inicio']} a {resultado['fim']})", NEGRITO))
+    print(pintar(f"\nMeta de poupança — {resultado['mes']}", NEGRITO))
     print(f"  receita esperada: {formatar(resultado['receitaEsperada'])}")
-    print(f"  despesa projetada até fim do ciclo: {formatar(resultado['despesaProjetada'])}")
+    print(f"  despesa projetada até fim do mês: {formatar(resultado['despesaProjetada'])}")
     print(f"  poupança projetada: {formatar(resultado['poupancaProjetada'])}")
     if meta_valor:
         cor = VERDE if resultado["noCaminho"] else VERMELHO
@@ -716,13 +716,13 @@ def cmd_score(args) -> int:
         resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
 
         if args.registrar_alertas:
-            ciclo = resultado["poupanca"]["ciclo"]
+            mes = resultado["poupanca"]["mes"]
             for categoria in resultado["categoriasEmRiscoDeEstourar"]:
-                anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], ciclo)
+                anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], mes)
                 notificar = anterior is None or categoria["projecao"] >= anterior * 1.2
                 categoria["notificarAgora"] = notificar
                 if notificar:
-                    db.registrar_projecao_alertada(conexao, categoria["categoria"], ciclo, categoria["projecao"])
+                    db.registrar_projecao_alertada(conexao, categoria["categoria"], mes, categoria["projecao"])
 
     if args.json:
         imprimir_json(resultado)
@@ -760,13 +760,13 @@ def cmd_notificar(args) -> int:
         meta_valor = float(meta_texto) if meta_texto else None
         resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
 
-        ciclo = resultado["poupanca"]["ciclo"]
+        mes = resultado["poupanca"]["mes"]
         for categoria in resultado["categoriasEmRiscoDeEstourar"]:
-            anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], ciclo)
+            anterior = db.ultima_projecao_alertada(conexao, categoria["categoria"], mes)
             notificar = anterior is None or categoria["projecao"] >= anterior * 1.2
             categoria["notificarAgora"] = notificar
             if notificar:
-                db.registrar_projecao_alertada(conexao, categoria["categoria"], ciclo, categoria["projecao"])
+                db.registrar_projecao_alertada(conexao, categoria["categoria"], mes, categoria["projecao"])
 
     if not notificador.deve_notificar(resultado):
         if args.json:

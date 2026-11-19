@@ -110,5 +110,61 @@ class TestCmdInvestimentos(unittest.TestCase):
         self.assertEqual(sum(p["valor"] for p in posicoes), 1500.0)
 
 
+class TestCmdScore(unittest.TestCase):
+    """Regressão real: `--registrar-alertas` quebrou em produção porque
+    `cmd_score` ainda lia `resultado["poupanca"]["ciclo"]`, campo que virou
+    "mes" na reorganização pro mês de referência — nenhum teste batia nesse
+    caminho (só `estatisticas.score_dia` era testado, nunca o comando de CLI
+    de ponta a ponta com --registrar-alertas)."""
+
+    def setUp(self):
+        self.pasta = tempfile.TemporaryDirectory()
+        self.addCleanup(self.pasta.cleanup)
+        self.banco = Path(self.pasta.name) / "teste.db"
+
+    def test_registrar_alertas_nao_quebra_sem_categoria_estourada(self):
+        args = argparse.Namespace(banco=self.banco, registrar_alertas=True, json=True, dia=None)
+        saida = _capturar(cli.cmd_score, args)
+        dados = json.loads(saida)
+        self.assertIn("pontuacaoFinal", dados)
+
+    def test_registrar_alertas_grava_no_banco_com_categoria_estourada(self):
+        from caderno_financeiro.datas import hoje_iso
+        hoje = hoje_iso()
+        with db.banco(self.banco) as conexao:
+            db.definir_orcamento(conexao, "Compras", 100.0)
+            db.inserir(conexao, [{
+                "id": "a", "data": hoje, "tipo": "Despesa", "categoria": "Compras",
+                "valor": 500.0, "valorTotal": 500.0, "parcelaAtual": 1, "totalParcelas": 1,
+                "formaPagamento": "Pix", "conta": "Nubank", "descricao": "compra",
+                "criadoEm": f"{hoje}T09:00:00", "grupoParcelamento": None,
+            }])
+        args = argparse.Namespace(banco=self.banco, registrar_alertas=True, json=True, dia=None)
+        saida = _capturar(cli.cmd_score, args)
+        dados = json.loads(saida)
+        self.assertTrue(len(dados["categoriasEmRiscoDeEstourar"]) >= 1)
+
+
+class TestCmdNotificar(unittest.TestCase):
+    def setUp(self):
+        self.pasta = tempfile.TemporaryDirectory()
+        self.addCleanup(self.pasta.cleanup)
+        self.banco = Path(self.pasta.name) / "teste.db"
+
+    def test_nao_quebra_com_categoria_estourada(self):
+        with db.banco(self.banco) as conexao:
+            db.definir_orcamento(conexao, "Compras", 100.0)
+            db.inserir(conexao, [{
+                "id": "a", "data": "2026-08-01", "tipo": "Despesa", "categoria": "Compras",
+                "valor": 500.0, "valorTotal": 500.0, "parcelaAtual": 1, "totalParcelas": 1,
+                "formaPagamento": "Pix", "conta": "Nubank", "descricao": "compra",
+                "criadoEm": "2026-08-01T09:00:00", "grupoParcelamento": None,
+            }])
+        args = argparse.Namespace(banco=self.banco, json=True, topico=None, simular=True)
+        saida = _capturar(cli.cmd_notificar, args)
+        dados = json.loads(saida)
+        self.assertIn("notificou", dados)
+
+
 if __name__ == "__main__":
     unittest.main()
