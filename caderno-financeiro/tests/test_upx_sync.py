@@ -82,7 +82,13 @@ class TestSincronizar(unittest.TestCase):
         self.addCleanup(self.pasta.cleanup)
         self.banco = Path(self.pasta.name) / "teste.db"
 
-    def test_transacao_com_confianca_alta_e_gravada_direto(self):
+    def test_contraparte_inedita_vai_pra_revisao_mesmo_com_confianca_alta(self):
+        """O nome de um estabelecimento raramente entrega sozinho o que a
+        compra foi de verdade — uma revisão de 14 meses de histórico (2026-
+        11-20/21) mostrou que a IA errava a categoria na maior parte dos
+        casos mesmo relatando confiança alta. Decisão do titular: toda
+        contraparte nunca vista antes vai pra fila de revisão, incondicional
+        — a confiança relatada pela IA deixou de decidir isso."""
         transacoes = [pagina([transacao_bruta(transaction_id="tx-1", valor=24.9, descricao="UBER TRIP")])]
         with db.banco(self.banco) as conexao, \
              mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
@@ -91,7 +97,7 @@ class TestSincronizar(unittest.TestCase):
             lancamentos = db.listar(conexao)
 
         self.assertEqual(resultado["transacoesNovas"], 1)
-        self.assertEqual(resultado["paraRevisao"], 0)
+        self.assertEqual(resultado["paraRevisao"], 1)
         self.assertEqual(len(lancamentos), 1)
         lanc = lancamentos[0]
         self.assertEqual(lanc["categoria"], "Transporte")
@@ -99,8 +105,31 @@ class TestSincronizar(unittest.TestCase):
         self.assertEqual(lanc["tipo"], "Despesa")
         self.assertEqual(lanc["origem"], "upx")
         self.assertEqual(lanc["origemId"], "tx-1")
-        self.assertEqual(lanc["revisaoPendente"], 0)
+        self.assertEqual(lanc["revisaoPendente"], 1)
         self.assertEqual(lanc["conta"], "Conta Corrente")
+
+    def test_contraparte_ja_vista_antes_repete_categoria_sem_ia_nem_revisao(self):
+        """Mesma contraparte já classificada antes no banco (revisada ou
+        não) repete a categoria da última vez — determinístico, sem chamar
+        a IA de novo e sem cair na fila de revisão."""
+        with db.banco(self.banco) as conexao:
+            db.inserir(conexao, [{
+                "id": "existente", "data": "2026-01-10", "tipo": "Despesa", "categoria": "Transporte",
+                "valor": 20.0, "valorTotal": 20.0, "parcelaAtual": 1, "totalParcelas": 1,
+                "formaPagamento": "Pix", "conta": "Nubank", "descricao": "UBER TRIP",
+                "criadoEm": "2026-01-10T09:00:00", "grupoParcelamento": None,
+            }])
+            transacoes = [pagina([transacao_bruta(transaction_id="tx-2", valor=24.9, descricao="UBER TRIP")])]
+            with mock.patch.object(ia, "chamar_ferramenta_unica", side_effect=mock_ferramentas(paginas_transacoes=transacoes)), \
+                 mock.patch.object(ia, "categorizar_transacoes") as mock_ia:
+                resultado = upx_sync.sincronizar(conexao)
+            lancamentos = db.listar(conexao)
+
+        mock_ia.assert_not_called()
+        self.assertEqual(resultado["paraRevisao"], 0)
+        novo = next(l for l in lancamentos if l["id"] != "existente")
+        self.assertEqual(novo["categoria"], "Transporte")
+        self.assertEqual(novo["revisaoPendente"], 0)
 
     def test_parcelamento_da_upx_e_propagado_pro_lancamento(self):
         """A UPX manda installment_number/total_installments no payload bruto

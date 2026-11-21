@@ -31,6 +31,7 @@ saldo/posição, não gasto, não faz sentido misturar com os lançamentos.
 
 from __future__ import annotations
 
+import re
 import sys
 import uuid
 from collections import defaultdict
@@ -324,6 +325,39 @@ def _categoria_conhecida(descricao: str, tipo: str, valor: float, conta: str = "
     return None
 
 
+def _chave_historico(descricao: str) -> str:
+    """Normaliza a descrição pra casar a mesma contraparte/estabelecimento
+    em sincronizações diferentes, ignorando número de parcela (que muda a
+    cada mês) e o prefixo de tipo de transferência (que varia: "Transferência
+    enviada|X", "Transferência enviada pelo Pix|X", só "X" no cartão)."""
+    base = descricao.split("|")[-1].strip()
+    base = re.sub(r"\s*\(\d+/\d+\)\s*$", "", base)
+    base = re.sub(r"\s*\d+/\d+\s*$", "", base)
+    return base.strip().upper()
+
+
+def _categoria_historica(conexao, descricao: str, tipo: str) -> Optional[str]:
+    """Se essa mesma contraparte/estabelecimento já apareceu antes no banco
+    (revisado por humano ou não), repete a categoria usada da vez mais
+    recente — determinístico, sem IA, sem chute. Transação nunca vista antes
+    não casa aqui e cai pra IA + fila de revisão (ver `sincronizar`)."""
+    chave = _chave_historico(descricao)
+    if not chave:
+        return None
+    cursor = conexao.execute(
+        "SELECT categoria, descricao, data FROM lancamentos WHERE tipo = ?",
+        (tipo,),
+    )
+    candidatos = [
+        (categoria, data) for categoria, desc, data in cursor
+        if _chave_historico(desc) == chave
+    ]
+    if not candidatos:
+        return None
+    candidatos.sort(key=lambda par: par[1], reverse=True)
+    return candidatos[0][0]
+
+
 def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = None) -> Dict[str, Any]:
     """Roda a sincronização completa. Por padrão busca uma janela fixa de
     `JANELA_MESES` até hoje (não avança um "desde a última sincronização",
@@ -392,9 +426,17 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
             conhecida = _categoria_conhecida(t["descricao"], t["tipo"], t["valor"], t["conta"])
             if conhecida:
                 categorias_conhecidas[i] = conhecida
-            else:
-                indices_para_ia.append(i)
-                para_ia.append({"descricao": t["descricao"], "valor": t["valor"], "tipo": t["tipo"]})
+                continue
+            # "já vimos essa contraparte antes" é mais confiável que a IA
+            # chutar de novo — pedido explícito do titular depois de ver que
+            # a classificação por IA errou a categoria de quase tudo numa
+            # revisão de 14 meses de histórico (ver conversa de 2026-11-20/21).
+            historica = _categoria_historica(conexao, t["descricao"], t["tipo"])
+            if historica:
+                categorias_conhecidas[i] = historica
+                continue
+            indices_para_ia.append(i)
+            para_ia.append({"descricao": t["descricao"], "valor": t["valor"], "tipo": t["tipo"]})
 
         classificacoes = ia.categorizar_transacoes(para_ia) if para_ia else []
         classificacoes_por_indice = dict(zip(indices_para_ia, classificacoes))
@@ -406,10 +448,13 @@ def sincronizar(conexao, *, desde: Optional[str] = None, ate: Optional[str] = No
                 categoria = categorias_conhecidas[i]
                 incerto = False
             else:
+                # contraparte nunca vista antes: a IA só dá um palpite
+                # inicial pra facilitar a revisão, mas a classificação nunca
+                # é aceita sem confirmação humana — o nome do estabelecimento
+                # raramente entrega sozinho o que a compra realmente foi.
                 classificacao = classificacoes_por_indice[i]
                 categoria = classificacao.get("categoria", "Outros")
-                confianca = classificacao.get("confianca", 0.0)
-                incerto = confianca < config.PLUGGY_CONFIANCA_MINIMA
+                incerto = True
             linhas.append({
                 "id": uuid.uuid4().hex,
                 "data": transacao["data"],

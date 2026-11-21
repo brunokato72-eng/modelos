@@ -759,6 +759,7 @@ def cmd_notificar(args) -> int:
 
         meta_valor = float(meta_texto) if meta_texto else None
         resultado = estatisticas.score_dia(lancamentos, orcamentos, meta_valor)
+        pendentes_revisao = db.contar_pendentes_revisao(conexao)
 
         mes = resultado["poupanca"]["mes"]
         for categoria in resultado["categoriasEmRiscoDeEstourar"]:
@@ -768,14 +769,14 @@ def cmd_notificar(args) -> int:
             if notificar:
                 db.registrar_projecao_alertada(conexao, categoria["categoria"], mes, categoria["projecao"])
 
-    if not notificador.deve_notificar(resultado):
+    if not notificador.deve_notificar(resultado, pendentes_revisao):
         if args.json:
             imprimir_json({"notificou": False, "resultado": resultado})
         else:
             print(pintar("nada chamando atenção hoje — não notificou.", VERDE))
         return 0
 
-    mensagem = notificador.montar_mensagem(resultado)
+    mensagem = notificador.montar_mensagem(resultado, pendentes_revisao)
     topico = args.topico or config.NTFY_TOPICO
     if args.simular:
         print(pintar(f"(simulação) mandaria: {mensagem}", CINZA))

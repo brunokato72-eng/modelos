@@ -24,7 +24,7 @@ from typing import Any, Dict
 from .valores import formatar
 
 
-def montar_mensagem(resultado: Dict[str, Any]) -> str:
+def montar_mensagem(resultado: Dict[str, Any], pendentes_revisao: int = 0) -> str:
     partes = []
 
     if resultado.get("alertasComportamento"):
@@ -43,10 +43,20 @@ def montar_mensagem(resultado: Dict[str, Any]) -> str:
     if not partes:
         partes.append("sem sinal específico")
 
-    return f"{' · '.join(partes)} (score {resultado['pontuacaoFinal']}/100, {resultado['classificacao']})"
+    mensagem = f"{' · '.join(partes)} (score {resultado['pontuacaoFinal']}/100, {resultado['classificacao']})"
+    if pendentes_revisao:
+        # pedido do titular (2026-11-21): contraparte nunca vista antes
+        # sempre cai pra revisão manual em vez de a IA chutar a categoria —
+        # revisar no mesmo dia (memória fresca) é o ponto central disso, daí
+        # entrar na notificação diária em vez de ficar só na fila silenciosa.
+        plural = "lançamento" if pendentes_revisao == 1 else "lançamentos"
+        mensagem += f" · {pendentes_revisao} {plural} novo(s) pra você classificar (`caderno revisar`)"
+    return mensagem
 
 
-def deve_notificar(resultado: Dict[str, Any]) -> bool:
+def deve_notificar(resultado: Dict[str, Any], pendentes_revisao: int = 0) -> bool:
+    if pendentes_revisao:
+        return True
     if resultado["pontuacaoFinal"] < 70:
         return True
     return any(c.get("notificarAgora") for c in resultado.get("categoriasEmRiscoDeEstourar", []))

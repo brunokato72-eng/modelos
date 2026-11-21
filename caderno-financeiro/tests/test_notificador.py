@@ -29,6 +29,10 @@ class TestDeveNotificar(unittest.TestCase):
         resultado = _score(pontuacao_final=90, categorias=[{"categoria": "Compras", "notificarAgora": False}])
         self.assertFalse(notificador.deve_notificar(resultado))
 
+    def test_pendente_de_revisao_notifica_mesmo_com_score_perfeito(self):
+        resultado = _score(pontuacao_final=100, classificacao="boa")
+        self.assertTrue(notificador.deve_notificar(resultado, pendentes_revisao=2))
+
 
 class TestMontarMensagem(unittest.TestCase):
     def test_prioriza_alerta_comportamental(self):
@@ -57,6 +61,17 @@ class TestMontarMensagem(unittest.TestCase):
         resultado = _score()
         msg = notificador.montar_mensagem(resultado)
         self.assertIn("sem sinal específico", msg)
+
+    def test_pendentes_de_revisao_aparece_na_mensagem(self):
+        resultado = _score()
+        msg = notificador.montar_mensagem(resultado, pendentes_revisao=3)
+        self.assertIn("3 lançamentos novo(s)", msg)
+        self.assertIn("caderno revisar", msg)
+
+    def test_um_pendente_usa_singular(self):
+        resultado = _score()
+        msg = notificador.montar_mensagem(resultado, pendentes_revisao=1)
+        self.assertIn("1 lançamento novo(s)", msg)
 
 
 class TestEnviarNtfy(unittest.TestCase):
