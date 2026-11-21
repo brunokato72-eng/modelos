@@ -87,9 +87,12 @@ _ALIAS_CATEGORIA = {
     "compra": "Compras",
     "vestuario": "Compras",
     "besteira": "Besteiras",
-    "divida": "Dívidas",
-    "dividas": "Dívidas",
-    "emprestimo": "Dívidas",
+    # "Dívidas" foi removida como categoria (2026-11-21, decisão do titular) —
+    # dívida/empréstimo sem parcela cadastrada cai em "Outros" até ter uma
+    # categoria funcional melhor na hora (ver _eh_compromisso_certo).
+    "divida": "Outros",
+    "dividas": "Outros",
+    "emprestimo": "Outros",
     "educacao": "Educação",
     "cursos": "Educação",
     "curso": "Educação",

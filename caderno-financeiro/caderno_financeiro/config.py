@@ -23,7 +23,6 @@ CATEGORIAS_DESPESA = (
     "Lazer",
     "Compras",
     "Besteiras",
-    "Dívidas",
     "Educação",
     "Pessoal",
     "Assinaturas",

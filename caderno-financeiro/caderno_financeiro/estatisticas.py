@@ -67,17 +67,14 @@ def _eh_ruido_de_margem(lancamento: Dict[str, Any]) -> bool:
     return any(palavra in descricao for palavra in _PALAVRAS_RUIDO_MARGEM)
 
 
-# "Dívidas" aqui costuma ser financiamento/fatura com cronograma já conhecido
-# (achado real: pagamentos decrescentes de R$1.139 a R$429 já cadastrados pros
-# próximos meses, sem usar o mecanismo de parcela do app) — pra efeito de
-# "o que já é certo" conta junto com parcela de verdade, não como gasto
-# recorrente estimado (senão esse valor entra duas vezes: uma na média
-# histórica, outra como compromisso certo do mês futuro específico).
-CATEGORIA_DIVIDAS = "Dívidas"
-
-
 def _eh_compromisso_certo(lancamento: Dict[str, Any]) -> bool:
-    return (lancamento.get("totalParcelas") or 1) > 1 or lancamento.get("categoria") == CATEGORIA_DIVIDAS
+    # Parcela cadastrada (totalParcelas > 1) é o único sinal de "já é certo,
+    # não é média estimada" — a categoria "Dívidas" que existia só pra cobrir
+    # dívida avulsa sem parcela foi removida (2026-11-21): toda dívida real
+    # vista até agora era financiamento/fatura já parcelado nesse campo, e o
+    # titular decidiu que o caso raro (dívida avulsa sem parcela) se resolve
+    # na hora se um dia aparecer, em vez de manter uma categoria confusa.
+    return (lancamento.get("totalParcelas") or 1) > 1
 
 
 # Em que mês (AAAA-MM) um lançamento conta de verdade — não necessariamente o
@@ -300,7 +297,7 @@ def _media_historica_despesa_centavos(
     onde os mais próximos ainda não têm nenhum lançamento real) em vez de
     parar nos 3 primeiros e arriscar não achar nenhum dado.
 
-    `excluir_compromissos_certos=True` tira parcelas e "Dívidas" da média —
+    `excluir_compromissos_certos=True` tira parcela cadastrada da média —
     usado em `projecao_compromissos_futuros`, que já soma esses compromissos
     certos de cada mês futuro à parte; sem isso, um valor entraria na média
     E de novo como "certo" do mês futuro específico, contando duas vezes."""
@@ -617,8 +614,8 @@ def projecao_compromissos_futuros(
     meses: int = 6,
 ) -> List[Dict[str, Any]]:
     """Quanto deve sobrar em cada um dos próximos meses: receita esperada menos
-    o que já é CERTO (parcelas cadastradas + "Dívidas", que na prática é
-    financiamento com cronograma já conhecido) menos o gasto recorrente típico
+    o que já é CERTO (parcelas cadastradas — financiamento/fatura com
+    cronograma já conhecido) menos o gasto recorrente típico
     (média histórica do que não é compromisso certo — mercado, transporte,
     etc.) — não é nem só os compromissos certos (ignora o resto do gasto
     normal) nem o orçamento cheio (assume disciplina perfeita), é o que você
